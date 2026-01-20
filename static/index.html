@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dataset Explorer | Premium</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Fira+Code:wght@400&display=swap"
+        rel="stylesheet">
+
+    <!-- Plotly -->
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h1>Dataset Explorer</h1>
+            <p>Advanced insights, automated cleaning, and stunning visualizations.</p>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="card upload-wrapper">
+            <div class="upload-zone" id="drop-zone">
+                <span class="upload-icon">📂</span>
+                <input type="file" id="file-input" class="file-input" accept=".csv,.tsv,.xlsx,.json,.parquet,.txt">
+                <h3>Click or Drag File Here</h3>
+                <p style="color:var(--text-secondary)">Supports CSV, Excel, JSON, Parquet</p>
+            </div>
+
+            <div style="text-align: center; margin-top: 20px;">
+                <div id="file-name" style="color: var(--accent-primary); font-weight: 500; height: 24px;"></div>
+                <div style="margin-top: 15px; color: var(--text-secondary); font-size: 0.9rem;">
+                    <label>Sample Rows: <input type="number" id="sample-rows" value="5000"
+                            style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); color:white; padding:4px 8px; border-radius:6px; width:80px; margin-left:8px; text-align:center;"></input></label>
+                </div>
+                <button id="upload-btn" class="btn-primary" disabled>Analyze Dataset</button>
+                <div id="status-message"></div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results-area" class="hidden">
+
+            <!-- Stats Row -->
+            <div class="stats-container fade-in">
+                <div class="stat-item card">
+                    <div class="stat-label">Total Rows</div>
+                    <div class="stat-value" id="stat-rows">-</div>
+                </div>
+                <div class="stat-item card">
+                    <div class="stat-label">Columns</div>
+                    <div class="stat-value" id="stat-cols">-</div>
+                </div>
+                <div class="stat-item card">
+                    <div class="stat-label">Duplicates</div>
+                    <div class="stat-value" id="stat-dupes">-</div>
+                </div>
+            </div>
+
+            <div class="grid-2 fade-in">
+                <!-- Data Quality -->
+                <div class="card">
+                    <h2><span class="section-icon">🛡️</span> Data Health</h2>
+                    <div id="quality-issues">
+                        <div style="color:var(--text-secondary); font-style:italic;">Analyzing quality...</div>
+                    </div>
+                </div>
+
+                <!-- Preprocessing -->
+                <div class="card">
+                    <h2><span class="section-icon">⚡</span> Preprocessing</h2>
+                    <div class="processing-options">
+                        <label class="option-row">
+                            <input type="checkbox" id="opt-duplicates" checked>
+                            <span>Remove Exact Duplicates</span>
+                        </label>
+                        <label class="option-row">
+                            <input type="checkbox" id="opt-missing" checked>
+                            <span>Impute Missing Values (Median/Mode)</span>
+                        </label>
+                        <label class="option-row">
+                            <input type="checkbox" id="opt-constant">
+                            <span>Drop Constant Columns</span>
+                        </label>
+                    </div>
+                    <button id="clean-btn" class="btn-primary" style="margin-top:10px;">Clean & Download</button>
+                    <div id="download-area" style="margin-top:15px;"></div>
+                </div>
+            </div>
+
+            <!-- Charts Grid -->
+            <div class="dashboard-grid" id="charts-grid">
+                <!-- Charts will be injected here -->
+            </div>
+
+            <!-- Data Profile -->
+            <div class="card full-width" style="margin-top: 40px;">
+                <h2><span class="section-icon">📊</span> Column Profile</h2>
+                <div class="profile-grid" id="profile-preview">Loading...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+
+</html>
