@@ -13,3 +13,4 @@ python-multipart
 plotly
 openpyxl
 pyarrow
+weasyprint

@@ -6,7 +6,7 @@
 
 ```bash
 # Download the package (or build it yourself)
-sudo dpkg -i dataset-viz_1.0.0_all.deb
+sudo dpkg -i datalyze_1.0.0_all.deb
 
 # If dependencies are missing, run:
 sudo apt-get install -f
@@ -30,7 +30,7 @@ chmod +x build-deb.sh
 ./build-deb.sh
 ```
 
-This creates `releases/dataset-viz_1.0.0_all.deb`
+This creates `releases/datalyze_1.0.0_all.deb`
 
 ---
 
@@ -38,26 +38,26 @@ This creates `releases/dataset-viz_1.0.0_all.deb`
 
 ### Command Line Interface
 
-After installation, use the `dataset-viz` command:
+After installation, use the `datalyze` command:
 
 ```bash
 # Start the service
-dataset-viz start
+datalyze start
 
 # Stop the service
-dataset-viz stop
+datalyze stop
 
 # Restart the service
-dataset-viz restart
+datalyze restart
 
 # Check status
-dataset-viz status
+datalyze status
 
 # View logs
-dataset-viz logs
+datalyze logs
 
 # Open in browser
-dataset-viz open
+datalyze open
 ```
 
 ### Systemd Service
@@ -66,22 +66,22 @@ The application runs as a systemd service:
 
 ```bash
 # Start
-sudo systemctl start dataset-viz
+sudo systemctl start datalyze
 
 # Stop
-sudo systemctl stop dataset-viz
+sudo systemctl stop datalyze
 
 # Enable on boot
-sudo systemctl enable dataset-viz
+sudo systemctl enable datalyze
 
 # Disable on boot
-sudo systemctl disable dataset-viz
+sudo systemctl disable datalyze
 
 # Check status
-sudo systemctl status dataset-viz
+sudo systemctl status datalyze
 
 # View logs
-sudo journalctl -u dataset-viz -f
+sudo journalctl -u datalyze -f
 ```
 
 ---
@@ -92,26 +92,26 @@ sudo journalctl -u dataset-viz -f
 
 ```bash
 # Remove package (keeps config files)
-sudo apt remove dataset-viz
+sudo apt remove datalyze
 
 # Remove package and config files
-sudo apt purge dataset-viz
+sudo apt purge datalyze
 ```
 
 ---
 
 ## Package Details
 
-**Package Name:** dataset-viz  
+**Package Name:** datalyze  
 **Version:** 1.0.0  
 **Architecture:** all  
-**Dependencies:** python3 (>= 3.8), python3-pip
+**Dependencies:** python3 (>= 3.8), python3-pip, libcairo2, libpango-1.0-0, libgdk-pixbuf2.0-0, libffi-dev, shared-mime-info
 
 **Installed Files:**
-- Application: `/opt/dataset-viz/`
-- Service: `/etc/systemd/system/dataset-viz.service`
-- CLI: `/usr/local/bin/dataset-viz`
-- Desktop Entry: `/usr/share/applications/dataset-viz.desktop`
+- Application: `/opt/datalyze/`
+- Service: `/etc/systemd/system/datalyze.service`
+- CLI: `/usr/local/bin/datalyze`
+- Desktop Entry: `/usr/share/applications/datalyze.desktop`
 
 **Port:** 8081  
 **URL:** http://localhost:8081
@@ -124,13 +124,13 @@ sudo apt purge dataset-viz
 
 ```bash
 # Check logs
-sudo journalctl -u dataset-viz -n 50
+sudo journalctl -u datalyze -n 50
 
 # Check if port is in use
 sudo netstat -tulpn | grep 8081
 
 # Manually test
-cd /opt/dataset-viz
+cd /opt/datalyze
 python3 app.py
 ```
 
@@ -138,7 +138,7 @@ python3 app.py
 
 ```bash
 # Reinstall dependencies
-cd /opt/dataset-viz
+cd /opt/datalyze
 sudo pip3 install -r requirements.txt
 ```
 
@@ -146,20 +146,20 @@ sudo pip3 install -r requirements.txt
 
 ```bash
 # Fix permissions
-sudo chown -R root:root /opt/dataset-viz
-sudo chmod -R 755 /opt/dataset-viz
+sudo chown -R root:root /opt/datalyze
+sudo chmod -R 755 /opt/datalyze
 ```
 
 ---
 
 ## Features
 
-✅ **Multi-GB Dataset Support** - Handle files up to 5GB  
+✅ **Massive Dataset Support** - Handle files up to 25GB with streaming & DuckDB  
 ✅ **Modern UI** - Dark mode with glassmorphism  
 ✅ **Multiple Export Formats** - CSV, Excel, JSON, Parquet  
 ✅ **Correlation Analysis** - Numeric relationship detection  
 ✅ **Advanced Preprocessing** - Normalize, standardize, encode, outlier handling  
-✅ **HTML Reports** - Comprehensive analysis reports  
+✅ **PDF Reports** - Comprehensive analysis reports in PDF format  
 ✅ **Auto-start on Boot** - Systemd service integration  
 
 ---
@@ -167,6 +167,6 @@ sudo chmod -R 755 /opt/dataset-viz
 ## Support
 
 For issues or questions:
-- Check logs: `dataset-viz logs`
-- View status: `dataset-viz status`
+- Check logs: `datalyze logs`
+- View status: `datalyze status`
 - GitHub: [Your repository URL]

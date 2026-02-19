@@ -56,15 +56,21 @@ except ImportError:
     DUCKDB_AVAILABLE = False
     DuckDBBackend = None
 
-app = FastAPI(title="Generic EDA Web Tool — Premium")
+try:
+    from weasyprint import HTML
+    WEASYPRINT_AVAILABLE = True
+except ImportError:
+    WEASYPRINT_AVAILABLE = False
+
+app = FastAPI(title="DataLyze — Premium EDA Tool")
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Configuration
-MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5GB in bytes (up from 1GB)
-LARGE_FILE_THRESHOLD = 1024 * 1024 * 1024  # 1GB - use DuckDB/Dask
-VERY_LARGE_THRESHOLD = 2 * 1024 * 1024 * 1024  # 2GB - prefer DuckDB
+MAX_FILE_SIZE = 25 * 1024 * 1024 * 1024  # 25GB in bytes
+LARGE_FILE_THRESHOLD = 1 * 1024 * 1024 * 1024  # 1GB - use DuckDB/Dask
+VERY_LARGE_THRESHOLD = 2 * 1024 * 1024 * 1024  # 2GB - force DuckDB
 CHUNK_SIZE = 100000  # Rows per chunk for streaming
 MAX_SAMPLE_ROWS = 50000  # Maximum rows to sample for visualization
 SUPPORTED_EXTENSIONS = ['.csv', '.tsv', '.txt', '.xlsx', '.xls', '.json', '.parquet']
@@ -550,23 +556,42 @@ async def upload(file: UploadFile = File(...), sample_rows: int = Form(5000)):
             'suggestion': f'Please upload one of these formats: {', '.join(SUPPORTED_EXTENSIONS)}'
         }, status_code=400)
     
-    # Read file contents
-    contents = await file.read()
-    
-    # Validate file size
-    file_size = len(contents)
-    if file_size > MAX_FILE_SIZE:
-        size_mb = file_size / (1024 * 1024)
-        max_mb = MAX_FILE_SIZE / (1024 * 1024)
+    # Validate file size (content-length header if available, otherwise check during stream)
+    content_length = file.size
+    if content_length and content_length > MAX_FILE_SIZE:
+        size_gb = content_length / (1024 * 1024 * 1024)
         return JSONResponse({
-            'error': f'File size ({size_mb:.1f}MB) exceeds maximum limit of {max_mb:.0f}MB',
-            'suggestion': 'Please upload a smaller file or reduce the dataset size'
+            'error': f'File size ({size_gb:.1f}GB) exceeds maximum limit of 25GB',
+            'suggestion': 'Please upload a smaller file'
         }, status_code=400)
     
+    file_size = 0
+    temp_file_path = None
+    
+    try:
+        # Stream file to temporary disk storage
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            temp_file_path = tmp.name
+            # Copy in chunks to avoid memory issues
+            import shutil
+            shutil.copyfileobj(file.file, tmp)
+            file_size = os.path.getsize(temp_file_path)
+    except Exception as e:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+        return JSONResponse({'error': f'Upload failed: {str(e)}'}, status_code=500)
+
+    # Re-validate size after upload
+    if file_size > MAX_FILE_SIZE:
+        os.unlink(temp_file_path)
+        return JSONResponse({
+            'error': 'File size exceeds maximum limit of 25GB',
+        }, status_code=400)
+
     if file_size == 0:
+        os.unlink(temp_file_path)
         return JSONResponse({
             'error': 'File is empty',
-            'suggestion': 'Please upload a file with data'
         }, status_code=400)
     
     # Select optimal backend
@@ -574,77 +599,45 @@ async def upload(file: UploadFile = File(...), sample_rows: int = Form(5000)):
     is_large_file = file_size > LARGE_FILE_THRESHOLD
     file_size_mb = file_size / (1024 * 1024)
     
-    # For DuckDB backend, we need to save file to disk first
-    if backend == 'duckdb' and ext in ['.csv', '.parquet']:
-        try:
-            # Save to temporary file
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-            temp_file.write(contents)
-            temp_file.close()
-            
-            # Use DuckDB backend
-            with DuckDBBackend(temp_file.name) as db:
-                # Load file into DuckDB
+    # Process based on backend
+    try:
+        if backend == 'duckdb' and ext in ['.csv', '.parquet']:
+             # Use DuckDB backend with the temp file
+            with DuckDBBackend(temp_file_path) as db:
                 load_result = db.load_file()
-                
                 if not load_result['success']:
                     raise ValueError(f"DuckDB loading failed: {load_result['error']}")
                 
                 total_rows = load_result['rows']
-                
-                # Determine sample size
                 sample_size = adaptive_sample_size(total_rows, file_size_mb)
-                
-                # Get sample for visualization
                 df = db.get_sample(n=sample_size, method='random')
                 original_rows = total_rows
                 
-            # Clean up temp file
-            os.unlink(temp_file.name)
-            
             # Create sheets dict for compatibility
             sheets = {'sheet1': df}
             
-        except Exception as e:
-            return JSONResponse({
-                'error': f'DuckDB processing failed: {str(e)}',
-                'suggestion': 'Try converting to Parquet format for better performance with large files'
-            }, status_code=500)
-    
-    else:
-        # Use standard pandas parsing
-        try:
+        else:
+            # For pandas, we need to read the file content from the temp file
+            # This is less efficient for >1GB files but necessary if not using DuckDB
+            with open(temp_file_path, 'rb') as f:
+                contents = f.read()
             sheets = parse_uploaded_file(contents, file.filename, sample_rows=sample_rows if not is_large_file else MAX_SAMPLE_ROWS)
-        except ValueError as e:
-            # User-friendly errors from parse_uploaded_file
-            return JSONResponse({
-                'error': str(e),
-                'suggestion': 'Please check your file format and try again'
-            }, status_code=400)
-        except MemoryError:
-            return JSONResponse({
-                'error': 'File is too large to process in memory',
-                'suggestion': 'Please upload a smaller file or reduce the sample_rows parameter'
-            }, status_code=400)
-        except Exception as e:
-            # Unexpected errors
-            return JSONResponse({
-                'error': f'Unexpected error while processing file: {str(e)}',
-                'suggestion': 'Please ensure your file is not corrupted and try again'
-            }, status_code=500)
-
-        # For multi-sheet files, pick first sheet as primary
-        primary_name = list(sheets.keys())[0]
-        df = sheets[primary_name].copy()
-        
-        # Apply memory optimizations for large files
-        if is_large_file:
-            df = optimize_dtypes(df)
-        
-        # Smart sampling for very large datasets
-        original_rows = len(df)
-        if len(df) > MAX_SAMPLE_ROWS:
-            df = smart_sample(df, MAX_SAMPLE_ROWS)
+            original_rows = len(sheets[list(sheets.keys())[0]]) # Approx for non-DuckDB
+            
+    except Exception as e:
+        if os.path.exists(temp_file_path):
+             os.unlink(temp_file_path)
+        return JSONResponse({
+            'error': str(e),
+            'suggestion': 'Processing failed. Try a different format.'
+        }, status_code=500)
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
         
     # coerce columns to strings
     df.columns = [str(c) for c in df.columns]
@@ -1033,13 +1026,27 @@ async def generate_report(file: UploadFile = File(...)):
 </html>
 """
         
-        # Return HTML as downloadable file
-        return HTMLResponse(
-            content=html_content,
-            headers={
-                'Content-Disposition': f'attachment; filename="report_{file.filename.rsplit(".", 1)[0]}.html"'
-            }
-        )
+        # Convert to PDF
+        if WEASYPRINT_AVAILABLE:
+            pdf_io = io.BytesIO()
+            HTML(string=html_content).write_pdf(pdf_io)
+            pdf_io.seek(0)
+            
+            return Response(
+                content=pdf_io.getvalue(),
+                media_type='application/pdf',
+                headers={
+                    'Content-Disposition': f'attachment; filename="report_{file.filename.rsplit(".", 1)[0]}.pdf"'
+                }
+            )
+        else:
+            # Fallback to HTML if WeasyPrint is not installed
+            return HTMLResponse(
+                content=html_content,
+                headers={
+                    'Content-Disposition': f'attachment; filename="report_{file.filename.rsplit(".", 1)[0]}.html"'
+                }
+            )
         
     except Exception as e:
         return JSONResponse({
