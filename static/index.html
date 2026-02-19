@@ -37,13 +37,29 @@
                 <p style="color:var(--text-secondary)">Supports CSV, Excel, JSON, Parquet</p>
             </div>
 
-            <div style="text-align: center; margin-top: 20px;">
-                <div id="file-name" style="color: var(--accent-primary); font-weight: 500; height: 24px;"></div>
-                <div style="margin-top: 15px; color: var(--text-secondary); font-size: 0.9rem;">
-                    <label>Sample Rows: <input type="number" id="sample-rows" value="5000"
-                            style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); color:white; padding:4px 8px; border-radius:6px; width:80px; margin-left:8px; text-align:center;"></input></label>
+            <!-- File Requirements -->
+            <div
+                style="margin-top: 15px; padding: 12px; background: rgba(99, 102, 241, 0.1); border-radius: 8px; border-left: 3px solid var(--accent-primary);">
+                <div style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6;">
+                    <div style="margin-bottom: 6px;"><strong style="color: var(--accent-primary);">📋 Supported
+                            Formats:</strong> CSV, TSV, TXT, XLSX, XLS, JSON, Parquet</div>
+                    <div style="margin-bottom: 6px;"><strong style="color: var(--accent-primary);">📏 Max File
+                            Size:</strong> 5GB | <strong style="color: var(--warning);">⚡ Files >1GB</strong> use DuckDB
+                        for ultra-fast processing</div>
+                    <div><strong style="color: var(--accent-primary);">🚀 Performance:</strong> Adaptive sampling
+                        (10k-100k rows) | WebGL rendering | Zero-copy Parquet reads</div>
                 </div>
-                <button id="upload-btn" class="btn-primary" disabled>Analyze Dataset</button>
+            </div>
+
+            <div style="text-align: center; margin-top: 20px;">
+                <div id="file-name-display" style="margin-top: 20px; font-size: 1rem; color: var(--text-secondary);">
+                </div>
+
+                <div style="display: flex; gap: 15px; margin-top: 20px; justify-content: center;">
+                    <button id="upload-btn" class="btn-primary" disabled>📊 Analyze Dataset</button>
+                    <button id="report-btn" class="btn-primary" disabled
+                        style="background: linear-gradient(135deg, #10b981, #059669);">📄 Download Report</button>
+                </div>
                 <div id="status-message"></div>
             </div>
         </div>

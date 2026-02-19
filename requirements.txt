@@ -6,3 +6,10 @@ python-multipart
 plotly
 openpyxl
 pyarrow
+dask[complete]>=2024.1.0
+duckdb>=0.10.0
+numpy
+python-multipart
+plotly
+openpyxl
+pyarrow

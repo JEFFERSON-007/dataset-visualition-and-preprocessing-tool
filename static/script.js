@@ -1,10 +1,16 @@
 document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('file-input');
     const uploadBtn = document.getElementById('upload-btn');
+    const reportBtn = document.getElementById('report-btn');  // Add report button
     const dropZone = document.getElementById('drop-zone');
     const statusMsg = document.getElementById('status-message');
-    const fileNameDisplay = document.getElementById('file-name');
+    const fileNameDisplay = document.getElementById('file-name-display');
     const resultsArea = document.getElementById('results-area');
+
+    // Configuration
+    const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
+    const LARGE_FILE_WARNING = 1024 * 1024 * 1024; // 1GB
+    const SUPPORTED_EXTENSIONS = ['.csv', '.tsv', '.txt', '.xlsx', '.xls', '.json', '.parquet'];
 
     // Store file for preprocessing re-upload (simulated state)
     let currentFile = null;
@@ -37,9 +43,51 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function handleFileSelect(file) {
+        // Validate file extension
+        const fileName = file.name.toLowerCase();
+        const ext = '.' + fileName.split('.').pop();
+
+        if (!SUPPORTED_EXTENSIONS.includes(ext)) {
+            statusMsg.style.color = 'var(--error)';
+            statusMsg.textContent = `Unsupported file type: ${ext}. Please upload: ${SUPPORTED_EXTENSIONS.join(', ')}`;
+            uploadBtn.disabled = true;
+            fileNameDisplay.textContent = 'No file selected';
+            return;
+        }
+
+        // Validate file size
+        if (file.size > MAX_FILE_SIZE) {
+            const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            const maxMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(0);
+            statusMsg.style.color = 'var(--error)';
+            statusMsg.textContent = `File too large (${sizeMB}MB). Maximum size: ${maxMB}MB`;
+            uploadBtn.disabled = true;
+            fileNameDisplay.textContent = 'No file selected';
+            return;
+        }
+
+        if (file.size === 0) {
+            statusMsg.style.color = 'var(--error)';
+            statusMsg.textContent = 'File is empty. Please select a file with data.';
+            uploadBtn.disabled = true;
+            fileNameDisplay.textContent = 'No file selected';
+            return;
+        }
+
+        // Show warning for large files
+        if (file.size > LARGE_FILE_WARNING) {
+            const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            statusMsg.style.color = 'var(--warning)';
+            statusMsg.textContent = `Large file detected (${sizeMB}MB). Processing may take longer and will use memory-efficient mode.`;
+        } else {
+            statusMsg.style.color = 'var(--text-secondary)';
+            statusMsg.textContent = 'File ready to upload';
+        }
+
         // Update UI
         fileNameDisplay.textContent = file.name;
         uploadBtn.disabled = false;
+        reportBtn.disabled = false;  // Enable report button
         currentFile = file;
 
         // Use DataTransfer to sync with input if dropped
@@ -71,21 +119,46 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: formData
             });
 
+            const data = await response.json();
+
             if (!response.ok) {
-                throw new Error((await response.json()).error || 'Upload failed');
+                // Display structured error with suggestion
+                const errorMsg = data.error || 'Upload failed';
+                const suggestion = data.suggestion ? `\n💡 ${data.suggestion}` : '';
+                throw new Error(errorMsg + suggestion);
             }
 
-            const data = await response.json();
             const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
 
             statusMsg.style.color = 'var(--success)';
             statusMsg.textContent = `Analysis complete in ${elapsed}s!`;
 
+            // Show sampling notification if data was sampled
+            if (data.is_sampled) {
+                const backendInfo = data.backend ? ` | Backend: ${data.backend.toUpperCase()}` : '';
+                const samplingMsg = document.createElement('div');
+                samplingMsg.style.cssText = 'margin-top:10px; padding:10px; background:rgba(245,158,11,0.1); border-left:3px solid var(--warning); border-radius:6px; font-size:0.9rem;';
+                samplingMsg.innerHTML = `
+                    <strong>📊 Large Dataset Detected (${data.file_size_mb}MB${backendInfo})</strong><br>
+                    Showing ${data.sampled_rows.toLocaleString()} sampled rows from ${data.total_rows.toLocaleString()} total rows for visualization.
+                    Statistics are based on the full dataset.
+                `;
+                statusMsg.parentElement.appendChild(samplingMsg);
+            }
+
             renderDashboard(data);
 
         } catch (error) {
             statusMsg.style.color = 'var(--error)';
-            statusMsg.textContent = `Error: ${error.message}`;
+            // Handle multi-line error messages
+            const lines = error.message.split('\n');
+            if (lines.length > 1) {
+                statusMsg.innerHTML = lines.map((line, i) =>
+                    i === 0 ? `❌ ${line}` : `<div style="margin-top:8px; font-size:0.9em;">${line}</div>`
+                ).join('');
+            } else {
+                statusMsg.textContent = `❌ ${error.message}`;
+            }
         } finally {
             uploadBtn.disabled = false;
             uploadBtn.textContent = 'Analyze Dataset';
@@ -116,7 +189,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
 
                 if (!response.ok) {
-                    throw new Error((await response.json()).error || 'Cleaning failed');
+                    const data = await response.json();
+                    const errorMsg = data.error || 'Cleaning failed';
+                    const suggestion = data.suggestion ? `\n💡 ${data.suggestion}` : '';
+                    throw new Error(errorMsg + suggestion);
                 }
 
                 const res = await response.json();
@@ -144,8 +220,11 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderDashboard(data) {
         resultsArea.classList.remove('hidden');
 
-        // Text Stats
-        document.getElementById('stat-rows').textContent = data.total_rows.toLocaleString();
+        // Text Stats - show both original and sampled if applicable
+        const rowsText = data.is_sampled
+            ? `${data.total_rows.toLocaleString()} (${data.sampled_rows.toLocaleString()} sampled)`
+            : data.total_rows.toLocaleString();
+        document.getElementById('stat-rows').textContent = rowsText;
         document.getElementById('stat-cols').textContent = data.headers.length;
 
         // Duplicate Stats
@@ -353,16 +432,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     hoverinfo: 'label+value+percent'
                 });
             } else if (rec.type === 'scatter') {
+                const xData = getCol(rec.x);
+                const yData = getCol(rec.y);
+                const useWebGL = xData.length > 10000; // Use WebGL for large datasets
+
                 traces.push({
-                    x: getCol(rec.x),
-                    y: getCol(rec.y),
+                    x: xData,
+                    y: yData,
                     mode: 'markers',
-                    type: 'scatter',
+                    type: useWebGL ? 'scattergl' : 'scatter',  // WebGL for >10k points
                     marker: {
-                        color: getCol(rec.y), // Color by Y value
+                        color: yData, // Color by Y value
                         colorscale: 'Plasma',
-                        size: 8,
-                        opacity: 0.7,
+                        size: useWebGL ? 5 : 8,  // Smaller points for WebGL
+                        opacity: useWebGL ? 0.6 : 0.7,
                         line: { width: 0 }
                     }
                 });
