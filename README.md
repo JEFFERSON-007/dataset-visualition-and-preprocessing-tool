@@ -33,6 +33,13 @@
 - WebGL-accelerated visualizations
 - Smooth animations and transitions
 
+### 🤖 **Intelligent Data Prep**
+- **Auto-ML Ready**: Automatically prepares data for machine learning.
+- **Smart Imputation**: Fills missing values with median (numeric) or mode (categorical).
+- **Auto-Encoding**: Converts text to numbers (OneHot/Label Encoding).
+- **Feature Scaling**: Standardizes numeric features.
+- **ID Detection**: Automatically drops non-predictive ID columns.
+
 ### 🧹 **Data Preprocessing**
 - Remove duplicates
 - Handle missing values (drop/impute)
@@ -106,7 +113,16 @@ chmod +x install.sh
 ./install.sh
 ```
 
-### Option 2: APT Package (Debian/Ubuntu)
+### Option 2: Windows Executable (.exe)
+
+**Build your own standalone .exe:**
+```batch
+# Build the executable
+datalyze.bat build
+```
+This creates `dist/DataLyze.exe` which can be run on any Windows PC without Python installed.
+
+### Option 3: APT Package (Debian/Ubuntu)
 
 **One-command installation:**
 ```bash
@@ -115,7 +131,7 @@ chmod +x build-deb.sh
 ./build-deb.sh
 
 # Install
-sudo dpkg -i releases/dataset-viz_1.0.0_all.deb
+sudo dpkg -i releases/datalyze_1.0.0_all.deb
 ```
 
 **Features:**
@@ -126,11 +142,11 @@ sudo dpkg -i releases/dataset-viz_1.0.0_all.deb
 
 **Usage:**
 ```bash
-dataset-viz start   # Start service
-dataset-viz stop    # Stop service
-dataset-viz status  # Check status
-dataset-viz logs    # View logs
-dataset-viz open    # Open in browser
+datalyze start   # Start service
+datalyze stop    # Stop service
+datalyze status  # Check status
+datalyze logs    # View logs
+datalyze open    # Open in browser
 ```
 
 See [INSTALL_APT.md](INSTALL_APT.md) for detailed instructions.

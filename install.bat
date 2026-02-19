@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo Dataset Visualization Tool - Installer
+echo DataLyze - Installer
 echo ========================================
 echo.
 
@@ -25,7 +25,7 @@ pip install -r requirements.txt
 echo [3/3] Setup complete!
 echo.
 echo ========================================
-echo Installation successful!
+echo DataLyze installation successful!
 echo ========================================
 echo.
 echo To run the application:

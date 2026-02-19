@@ -14,3 +14,5 @@ plotly
 openpyxl
 pyarrow
 weasyprint
+scikit-learn
+pyinstaller

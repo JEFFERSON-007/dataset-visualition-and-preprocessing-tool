@@ -217,6 +217,49 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Make globally accessible for HTML onclick
+    window.autoPrepML = function () {
+        if (!currentFile) return alert('Please upload a file first');
+
+        // Optional: Ask for target column
+        const target = prompt("Enter target column name (optional - leave empty to process all):");
+
+        const formData = new FormData();
+        formData.append('file', currentFile);
+        if (target) formData.append('target_col', target);
+
+        const btn = document.querySelector('button[onclick="autoPrepML()"]');
+        const originalText = btn.textContent;
+        btn.textContent = 'Processing...';
+        btn.disabled = true;
+
+        fetch('/auto_prep_ml', {
+            method: 'POST',
+            body: formData
+        })
+            .then(response => {
+                if (!response.ok) return response.json().then(err => { throw new Error(err.error) });
+                return response.blob();
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ml_ready_${currentFile.name.split('.')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                alert('ML-Ready dataset downloaded successfully! 🚀');
+            })
+            .catch(error => {
+                alert('Auto-Prep Failed: ' + error.message);
+            })
+            .finally(() => {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            });
+    };
+
     function renderDashboard(data) {
         resultsArea.classList.remove('hidden');
 

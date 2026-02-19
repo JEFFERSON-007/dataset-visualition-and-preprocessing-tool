@@ -62,6 +62,16 @@ try:
 except ImportError:
     WEASYPRINT_AVAILABLE = False
 
+# ML Imports (Lazy load in function to speed up startup, but check here)
+try:
+    from sklearn.impute import SimpleImputer
+    from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
+    from sklearn.compose import ColumnTransformer
+    from sklearn.pipeline import Pipeline
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+
 app = FastAPI(title="DataLyze — Premium EDA Tool")
 
 # Mount static files
@@ -1052,6 +1062,102 @@ async def generate_report(file: UploadFile = File(...)):
         return JSONResponse({
             'error': f'Failed to generate report: {str(e)}'
         }, status_code=500)
+
+@app.post("/auto_prep_ml")
+async def auto_prep_for_ml(file: UploadFile = File(...), target_col: str = Form(None)):
+    """
+    Intelligent Data Preparation for Machine Learning
+    - Handles missing values
+    - Encodes categorical variables
+    - Scales numeric features
+    - Detects ID columns
+    """
+    if not SKLEARN_AVAILABLE:
+        return JSONResponse({'error': 'scikit-learn not installed. Please install it to use this feature.'}, status_code=500)
+
+    try:
+        contents = await file.read()
+        df = parse_uploaded_file(contents, file.filename, sample_rows=None) # Load full file for ML
+        
+        # 1. ID Column Detection (Drop high cardinality non-numeric)
+        potential_ids = []
+        for col in df.select_dtypes(include=['object', 'string']).columns:
+            if df[col].nunique() / len(df) > 0.95: # >95% unique
+                potential_ids.append(col)
+        
+        if potential_ids:
+            df = df.drop(columns=potential_ids)
+        
+        # 2. Separate Features and Target
+        y = None
+        if target_col and target_col in df.columns:
+            y = df[target_col]
+            X = df.drop(columns=[target_col])
+        else:
+            X = df
+            
+        # 3. Identify Column Types
+        numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
+        categorical_features = X.select_dtypes(include=['object', 'category']).columns
+        
+        # 4. Define Transformers
+        numeric_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ])
+
+        categorical_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='most_frequent')),
+            ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False)) # Dense for now
+        ])
+
+        # 5. Create Preprocessor
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', numeric_transformer, numeric_features),
+                ('cat', categorical_transformer, categorical_features)
+            ],
+            remainder='passthrough' # Keep other cols (like datetime if unhandled)
+        )
+        
+        # 6. Fit and Transform
+        X_processed = preprocessor.fit_transform(X)
+        
+        # 7. Reconstruct DataFrame with names
+        # Get feature names
+        new_cols = []
+        
+        # Numeric names
+        new_cols.extend(numeric_features)
+        
+        # Categorical names (OneHot)
+        if hasattr(preprocessor.named_transformers_['cat'], 'get_feature_names_out'):
+             cat_names = preprocessor.named_transformers_['cat']['encoder'].get_feature_names_out(categorical_features)
+             new_cols.extend(cat_names)
+        else:
+            # Fallback if get_feature_names_out fails
+            new_cols.extend([f"enc_{i}" for i in range(X_processed.shape[1] - len(numeric_features))])
+            
+        # Create output DF
+        df_ml_ready = pd.DataFrame(X_processed, columns=new_cols[:X_processed.shape[1]])
+        
+        # Re-attach target if exists
+        if y is not None:
+             df_ml_ready[target_col] = y.values
+             
+        # Export to CSV
+        output = io.StringIO()
+        df_ml_ready.to_csv(output, index=False)
+        output.seek(0)
+        
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=ml_ready_{file.filename.split('.')[0]}.csv"}
+        )
+
+    except Exception as e:
+        return JSONResponse({'error': f'Auto-Prep failed: {str(e)}'}, status_code=500)
 
 
 @app.post('/correlation_matrix')

@@ -1,9 +1,9 @@
 @echo off
 echo ========================================
-echo Dataset Visualization Tool
+echo DataLyze
 echo ========================================
 echo.
-echo Starting server...
+echo Starting DataLyze server...
 echo Server will be available at: http://localhost:8081
 echo.
 echo Press Ctrl+C to stop the server
