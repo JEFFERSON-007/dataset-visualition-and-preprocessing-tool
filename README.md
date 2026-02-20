@@ -1,344 +1,53 @@
-# Dataset Visualization & Preprocessing Tool
+# 📊 DataLyze: Premium Data Visualization & Preprocessing
 
-<div align="center">
+![DataLyze Header](https://raw.githubusercontent.com/placeholder-images/datalyze-header.png)
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)
-![Python](https://img.shields.io/badge/python-3.8+-green.svg)
-![License](https://img.shields.io/badge/license-MIT-orange.svg)
-
-**Professional-grade tool for analyzing and preprocessing datasets up to 5GB**
-
-[Features](#features) • [Quick Start](#quick-start) • [Installation](#installation) • [Usage](#usage) • [Performance](#performance)
-
-</div>
-
----
+**DataLyze** is a professional-grade, high-performance data analysis platform designed to turn messy datasets into stunning visualizations and ML-ready data artifacts in seconds.
 
 ## ✨ Features
 
-### 📊 **Multi-Format Support**
-- CSV, TSV, TXT (delimited files)
-- Excel (XLSX, XLS) - multiple sheets
-- JSON (standard & NDJSON)
-- Parquet (with zero-copy reads)
+- **🚀 Instant Profiling**: Multi-threaded backend analysis for lighting fast metadata extraction.
+- **🛡️ Data Health Scan**: Holistic quality assessment (duplicates, missing values, constant columns).
+- **💎 Glassmorphism UI**: Beautiful, modern dashboard with dark/light mode support.
+- **🔗 Merge Studio**: SQL-like joins for multi-file analysis directly in the browser.
+- **🤖 ML Auto-Prep**: Automated imputation and encoding for data science workflows.
+- **📄 Pro Reporting**: Export statistics to polished PDF or HTML documents.
+- **⚡ Performance**: Optimized for datasets up to 25GB using DuckDB sampling.
 
-### 🚀 **Intelligent Backend Selection**
-- **<1GB**: Pandas (fast in-memory processing)
-- **1-2GB**: Dask (distributed computing)
-- **>2GB**: DuckDB (SQL-based analytics with zero-copy)
+## 📸 Screenshots
 
-### 🎨 **Modern UI**
-- Dark mode with glassmorphism design
-- Responsive layout (mobile, tablet, desktop)
-- WebGL-accelerated visualizations
-- Smooth animations and transitions
+### The Project Dashboard
+*(Placeholder: Dashboard showcasing charts and data health cards)*
 
-### 🤖 **Intelligent Data Prep**
-- **Auto-ML Ready**: Automatically prepares data for machine learning.
-- **Smart Imputation**: Fills missing values with median (numeric) or mode (categorical).
-- **Auto-Encoding**: Converts text to numbers (OneHot/Label Encoding).
-- **Feature Scaling**: Standardizes numeric features.
-- **ID Detection**: Automatically drops non-predictive ID columns.
+### ML Preprocessing Studio
+*(Placeholder: Showing one-click cleanup and encoding options)*
 
-### 🧹 **Data Preprocessing**
-- Remove duplicates
-- Handle missing values (drop/impute)
-- Detect outliers
-- Data quality analysis
-- Download cleaned datasets
-- Generate analysis reports
+## 🛠️ Installation
 
-### ⚡ **Performance Optimizations**
-- Adaptive sampling (10k-100k rows)
-- Memory-efficient dtype optimization
-- WebGL rendering for large charts
-- Chunked processing for multi-GB files
+### For Users (Windows)
+1. Navigate to the `dist/` folder.
+2. Double-click `DataLyze.exe`.
+3. If Windows SmartScreen appears, click **More Info** > **Run Anyway**.
 
----
-
-## 🚀 Quick Start
-
-### Windows
-
-```batch
-# 1. Double-click to install
-install.bat
-
-# 2. Double-click to run
-start.bat
-
-# 3. Open browser
-http://localhost:8081
-```
-
-### macOS / Linux
-
+### For Developers
 ```bash
-# 1. Make scripts executable
-chmod +x install.sh start.sh
-
-# 2. Install
-./install.sh
-
-# 3. Run
-./start.sh
-
-# 4. Open browser
-http://localhost:8081
-```
-
----
-
-## 📋 Requirements
-
-- **Python**: 3.8 or higher
-- **RAM**: 2GB minimum (4GB recommended for large files)
-- **Browser**: Chrome, Firefox, Edge, or Safari (latest versions)
-- **Disk Space**: 500MB for dependencies
-
----
-
-## 🔧 Installation
-
-### Option 1: Automated (Recommended)
-
-**Windows:**
-```batch
-install.bat
-```
-
-**macOS/Linux:**
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-### Option 2: Windows Executable (.exe)
-
-**Build your own standalone .exe:**
-```batch
-# Build the executable
-datalyze.bat build
-```
-This creates `dist/DataLyze.exe` which can be run on any Windows PC without Python installed.
-
-### Option 3: APT Package (Debian/Ubuntu)
-
-**One-command installation:**
-```bash
-# Build the package
-chmod +x build-deb.sh
-./build-deb.sh
-
-# Install
-sudo dpkg -i releases/datalyze_1.0.0_all.deb
-```
-
-**Features:**
-- ✅ Auto-starts as systemd service
-- ✅ Runs on boot
-- ✅ Easy management with `dataset-viz` command
-- ✅ Clean uninstallation
-
-**Usage:**
-```bash
-datalyze start   # Start service
-datalyze stop    # Stop service
-datalyze status  # Check status
-datalyze logs    # View logs
-datalyze open    # Open in browser
-```
-
-See [INSTALL_APT.md](INSTALL_APT.md) for detailed instructions.
-
-### Option 3: Manual
-
-```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
+# Clone the repository
+git clone https://github.com/your-repo/datalyze.git
 
 # Install dependencies
-pip install --upgrade pip
 pip install -r requirements.txt
 
-# Run application
+# Run the app
 python app.py
 ```
 
----
+## 📖 Documentation
+- **[User Manual](USER_MANUAL.md)**: How to use the platform.
+- **[Project Analysis](PROJECT_REPORT.md)**: Deep dive into the architecture and performance.
+- **[Installation Guide](install_windows.bat)**: Automated setup for Windows environments.
 
-## 📖 Usage
-
-### 1. Upload Dataset
-
-- **Drag & drop** your file onto the upload zone
-- Or **click** to browse and select
-- Supported formats: CSV, TSV, Excel, JSON, Parquet
-- Max file size: **5GB**
-
-### 2. View Analysis
-
-The tool automatically:
-- Profiles your data (types, missing values, duplicates)
-- Recommends visualizations based on data types
-- Generates interactive charts
-- Identifies data quality issues
-
-### 3. Preprocess (Optional)
-
-Select preprocessing options:
-- ✅ Remove duplicate rows
-- ✅ Drop rows with missing values
-- ✅ Impute missing values (mean/median/mode)
-- ✅ Remove outliers
-
-### 4. Download
-
-Download your cleaned dataset in the original format.
-
-### 5. Generate Report
-
-Click **"Download Report"** to get a comprehensive HTML analysis of your dataset, including:
-- Statistical summary
-- Data quality issues
-- Column distribution details
+## 🛡️ License
+Distributed under the MIT License. See `LICENSE` for more information.
 
 ---
-
-## 📊 Performance
-
-### Processing Speed
-
-| File Size | Format | Backend | Load Time | Memory Usage |
-|-----------|--------|---------|-----------|--------------|
-| 100MB | CSV | Pandas | <2s | ~30MB |
-| 500MB | CSV | Pandas | ~5s | ~150MB |
-| 1GB | CSV | DuckDB | ~8s | ~200MB |
-| 3GB | CSV | DuckDB | ~10s | ~250MB |
-| 5GB | Parquet | DuckDB | ~3s | ~150MB (zero-copy) |
-
-### Visualization Performance
-
-- **<10k points**: Standard Plotly rendering
-- **>10k points**: WebGL-accelerated (scattergl)
-- **Adaptive sampling**: Maintains visual fidelity with reduced data
-
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────┐
-│           Frontend (HTML/JS)            │
-│  - Modern UI with dark mode             │
-│  - WebGL visualizations                 │
-│  - Drag-and-drop upload                 │
-└────────────────┬────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────┐
-│         Backend (FastAPI)               │
-│  - Smart backend selection              │
-│  - File parsing & validation            │
-│  - Data profiling                       │
-└────────────────┬────────────────────────┘
-                 │
-        ┌────────┴────────┐
-        ▼                 ▼
-┌──────────────┐  ┌──────────────┐
-│    Pandas    │  │   DuckDB     │
-│   (<1GB)     │  │   (>1GB)     │
-│              │  │              │
-│ - In-memory  │  │ - SQL-based  │
-│ - Fast       │  │ - Zero-copy  │
-└──────────────┘  └──────────────┘
-```
-
----
-
-## 🛠️ Technology Stack
-
-- **Backend**: FastAPI, Uvicorn
-- **Data Processing**: Pandas, DuckDB, Dask
-- **Visualization**: Plotly.js (with WebGL)
-- **UI**: HTML5, CSS3 (Glassmorphism), Vanilla JavaScript
-
----
-
-## 🐛 Troubleshooting
-
-### Python Not Found
-
-**Windows:**
-```
-Download from: https://www.python.org/downloads/
-Make sure to check "Add Python to PATH" during installation
-```
-
-**macOS:**
-```bash
-brew install python@3.11
-```
-
-**Linux (Ubuntu/Debian):**
-```bash
-sudo apt update
-sudo apt install python3 python3-pip python3-venv
-```
-
-### Port Already in Use
-
-If port 8081 is already in use, edit `app.py`:
-```python
-# Change this line at the bottom
-uvicorn.run(app, host='0.0.0.0', port=8082)  # Use different port
-```
-
-### Dependencies Installation Failed
-
-```bash
-# Upgrade pip first
-python -m pip install --upgrade pip
-
-# Install dependencies one by one
-pip install fastapi uvicorn pandas numpy
-pip install plotly openpyxl pyarrow
-pip install dask[complete] duckdb
-```
-
----
-
-## 📝 License
-
-MIT License - feel free to use this tool for personal or commercial projects.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to:
-- Report bugs
-- Suggest features
-- Submit pull requests
-
----
-
-## 📧 Support
-
-For issues or questions, please open an issue on GitHub.
-
----
-
-<div align="center">
-
-**Made with ❤️ for data enthusiasts**
-
-⭐ Star this repo if you find it useful!
-
-</div>
+*Built with ❤️ for Data Scientists and Analysts.*

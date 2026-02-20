@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DataLyze | Premium Dataset Explorer</title>
+    <title>DataLyze | Professional Edition</title>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,64 +17,128 @@
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 
     <!-- Styles -->
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v={{ v }}">
 </head>
 
-<body>
+<body class="theme-dark">
 
     <div class="container">
+        <!-- Professional Header -->
+        <div class="header-row">
+            <div class="logo-area">
+                <div class="logo-icon">📊</div>
+                <div class="logo-text">DataLyze <span class="badge">PRO</span> <span
+                        style="font-size:0.6em; opacity:0.8; color:cyan;">BUILD-19:05</span></div>
+            </div>
+            <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+                ☀️
+            </button>
+        </div>
+
         <div class="header">
             <h1>DataLyze</h1>
             <p>Advanced insights, automated cleaning, and stunning visualizations.</p>
         </div>
 
+        <!-- Session Control -->
+        <input type="hidden" id="session-id">
+
         <!-- Upload Section -->
-        <div class="card upload-wrapper">
+        <div class="card upload-wrapper" id="main-upload">
             <div class="upload-zone" id="drop-zone">
                 <span class="upload-icon">📂</span>
                 <input type="file" id="file-input" class="file-input" accept=".csv,.tsv,.xlsx,.json,.parquet,.txt">
-                <h3>Click or Drag File Here</h3>
-                <p style="color:var(--text-secondary)">Supports CSV, Excel, JSON, Parquet</p>
+                <h3>Click or Drag Dataset Here</h3>
+                <p style="color:var(--text-secondary)">Supports CSV, Excel, JSON, Parquet (Max 25GB)</p>
             </div>
 
-            <!-- File Requirements -->
-            <div
-                style="margin-top: 15px; padding: 12px; background: rgba(99, 102, 241, 0.1); border-radius: 8px; border-left: 3px solid var(--accent-primary);">
-                <div style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6;">
-                    <div style="margin-bottom: 6px;"><strong style="color: var(--accent-primary);">📋 Supported
-                            Formats:</strong> CSV, TSV, TXT, XLSX, XLS, JSON, Parquet</div>
-                    <div style="margin-bottom: 6px;"><strong style="color: var(--accent-primary);">📏 Max File
-                            Size:</strong> 5GB | <strong style="color: var(--warning);">⚡ Files >1GB</strong> use DuckDB
-                        for ultra-fast processing</div>
-                    <div><strong style="color: var(--accent-primary);">🚀 Performance:</strong> Adaptive sampling
-                        (10k-100k rows) | WebGL rendering | Zero-copy Parquet reads</div>
-                </div>
-            </div>
-
-            <div style="text-align: center; margin-top: 20px;">
-                <div id="file-name-display" style="margin-top: 20px; font-size: 1rem; color: var(--text-secondary);">
-                </div>
-
+            <div id="file-info-area" class="hidden fade-in" style="margin-top: 20px; text-align: center;">
+                <div id="file-name-display" style="font-size: 1.1rem; font-weight: 600;"></div>
                 <div style="display: flex; gap: 15px; margin-top: 20px; justify-content: center;">
-                    <button id="upload-btn" class="btn-primary" disabled>📊 Analyze Dataset</button>
-                    <button id="report-btn" class="btn-primary" disabled
-                        style="background: linear-gradient(135deg, #10b981, #059669);">📄 Download Report</button>
+                    <button id="upload-btn" class="btn-primary">🚀 Analyze Dataset</button>
                 </div>
-                <div id="status-message"></div>
             </div>
+
+            <div id="status-message"></div>
         </div>
 
-        <!-- Results Section -->
+        <!-- Main Dashboard -->
         <div id="results-area" class="hidden">
 
-            <div class="control-group">
-                <label>Preprocessing</label>
-                <div class="preprocessing-controls">
-                    <button class="btn btn-secondary" onclick="cleanData()">Clean Data</button>
+            <!-- Toolbar -->
+            <div class="toolbar card">
+                <div class="tool-group">
+                    <button class="btn btn-secondary" onclick="toggleSection('merge-studio')">🔗 Merge Datasets</button>
+                    <button class="btn btn-secondary" onclick="toggleSection('clean-studio')">🧹 Clean Data</button>
+                </div>
+                <div class="tool-group">
                     <button class="btn btn-primary" onclick="autoPrepML()">🤖 Auto-Prep for ML</button>
-                    <button class="btn btn-accent" onclick="downloadReport()">Download Report</button>
+                    <button class="btn btn-accent" onclick="downloadReport()">📄 Download Report</button>
                 </div>
             </div>
+
+            <!-- Merge Studio (Hidden by default) -->
+            <div id="merge-studio" class="card hidden fade-in"
+                style="margin-bottom: 30px; border-left: 4px solid var(--accent-secondary);">
+                <h2><span class="section-icon">🔗</span> Merge Studio</h2>
+                <p style="color:var(--text-secondary); margin-bottom: 20px;">Join your current dataset with another
+                    file.</p>
+
+                <div class="grid-2">
+                    <div>
+                        <label class="form-label"
+                            title="Column names from the primary dataset (comma-separated for multi-key)">Primary
+                            Key(s)</label>
+                        <input type="text" id="merge-left-key" class="form-select" placeholder="e.g. ID, Date">
+                    </div>
+                    <div>
+                        <label class="form-label">Secondary File(s)</label>
+                        <input type="file" id="merge-file-input" class="form-select" multiple
+                            accept=".csv,.xlsx,.parquet,.tsv">
+                    </div>
+                </div>
+                <div class="grid grid-2" style="margin-top: 20px;">
+                    <div>
+                        <label class="form-label"
+                            title="Column names from the secondary dataset (comma-separated for multi-key)">Secondary
+                            Key(s)</label>
+                        <input type="text" id="merge-right-key" class="form-select" placeholder="e.g. ID, Timestamp">
+                    </div>
+                    <div>
+                        <label class="form-label">Merge Type</label>
+                        <select id="merge-how" class="form-select">
+                            <option value="inner">Inner Join (Matches Only)</option>
+                            <option value="left">Left Join (Keep All Primary)</option>
+                            <option value="right">Right Join (Keep All Secondary)</option>
+                            <option value="outer">Full Outer Join (Keep All)</option>
+                        </select>
+                    </div>
+                </div>
+                <button id="merge-btn" class="btn-primary" style="width: 100%; margin-top: 20px;">Run Bulk
+                    Merge</button>
+            </div>
+
+            <!-- Clean Studio (Hidden by default) -->
+            <div id="clean-studio" class="card hidden fade-in" style="margin-bottom: 30px;">
+                <h2><span class="section-icon">🧹</span> Data Cleaning</h2>
+                <div class="processing-options">
+                    <label class="option-row">
+                        <input type="checkbox" id="opt-duplicates" checked>
+                        <span>Remove Exact Duplicates</span>
+                    </label>
+                    <label class="option-row">
+                        <input type="checkbox" id="opt-missing" checked>
+                        <span>Impute Missing Values (Median/Mode)</span>
+                    </label>
+                    <label class="option-row">
+                        <input type="checkbox" id="opt-constant">
+                        <span>Drop Constant Columns</span>
+                    </label>
+                </div>
+                <button id="clean-btn" class="btn-primary" style="margin-top:10px;">Clean & Download</button>
+                <div id="download-area" style="margin-top:15px;"></div>
+            </div>
+
             <!-- Stats Row -->
             <div class="stats-container fade-in">
                 <div class="stat-item card">
@@ -100,25 +164,10 @@
                     </div>
                 </div>
 
-                <!-- Preprocessing -->
+                <!-- Column Profile -->
                 <div class="card">
-                    <h2><span class="section-icon">⚡</span> Preprocessing</h2>
-                    <div class="processing-options">
-                        <label class="option-row">
-                            <input type="checkbox" id="opt-duplicates" checked>
-                            <span>Remove Exact Duplicates</span>
-                        </label>
-                        <label class="option-row">
-                            <input type="checkbox" id="opt-missing" checked>
-                            <span>Impute Missing Values (Median/Mode)</span>
-                        </label>
-                        <label class="option-row">
-                            <input type="checkbox" id="opt-constant">
-                            <span>Drop Constant Columns</span>
-                        </label>
-                    </div>
-                    <button id="clean-btn" class="btn-primary" style="margin-top:10px;">Clean & Download</button>
-                    <div id="download-area" style="margin-top:15px;"></div>
+                    <h2><span class="section-icon">🔎</span> Quick Profile</h2>
+                    <div class="profile-mini-scroll" id="profile-preview">Loading...</div>
                 </div>
             </div>
 
@@ -127,16 +176,11 @@
                 <!-- Charts will be injected here -->
             </div>
 
-            <!-- Data Profile -->
-            <div class="card full-width" style="margin-top: 40px;">
-                <h2><span class="section-icon">📊</span> Column Profile</h2>
-                <div class="profile-grid" id="profile-preview">Loading...</div>
-            </div>
         </div>
 
     </div>
 
-    <script src="/static/script.js"></script>
+    <script src="/static/script.js?v={{ v }}"></script>
 </body>
 
 </html>

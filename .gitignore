@@ -1,3 +1,32 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv*/
+.venv*/
+
+# Build Artifacts (PyInstaller)
+build/
+dist/
+!dist/DataLyze.exe
+*.spec
+*_log.txt
+*.log
+
+# Project Specific
+*.csv
+!weather_sample.csv
+.gemini/
+.idea/
+.vscode/
+node_modules/
+.system_generated/
+build_exe.py_temp/
+
+# Backup/Temp
+*.bak
+*.tmp
+*~

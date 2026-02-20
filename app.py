@@ -1,53 +1,41 @@
-"""
-Enhanced single-file FastAPI EDA app
 
-Features:
-- Supports CSV, TSV, XLSX (multiple sheets), JSON (ndjson & nested), Parquet
-- Automatic type detection: numeric, datetime, categorical, boolean, text, geo (lat/lon), nested JSON flattening
-- Profiling and recommended visualizations per dataset
-- Interactive Plotly frontend (embedded) with Premium Design
-- Real-time chart rendering based on recommendations
+import os
+import sys
+import logging
+import json
+import uuid
+import shutil
+import asyncio
+import tempfile
+import threading
+import webbrowser
+import warnings
+import io
+import time
+from typing import Dict, Any, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-Install requirements:
-    pip install fastapi uvicorn pandas numpy python-multipart plotly openpyxl pyarrow
-    # duckdb is optional for very large files: pip install duckdb
-
-Run:
-    python app.py
-
-Open:
-    http://localhost:8081
-"""
-
-from fastapi import FastAPI, File, UploadFile, Form
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Response
-from fastapi.staticfiles import StaticFiles
-import uvicorn
+# Data Science
 import pandas as pd
 import numpy as np
-import io
-import json
-from typing import List, Dict, Any, Union
-import tempfile
-import os
-import uuid
-from typing import Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-import warnings
-warnings.filterwarnings('ignore')
 
-# Try to import Dask for large file support
-try:
-    import dask
-    import dask.dataframe as dd
-    from dask.diagnostics import ProgressBar
-    DASK_AVAILABLE = True
-except ImportError:
-    DASK_AVAILABLE = False
-    dd = None
+# FastAPI
+from fastapi import FastAPI, UploadFile, File, Form, Request, BackgroundTasks
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+import uvicorn
 
-# Try to import DuckDB for very large file support
+# --- Configuration & Setup ---
+
+# Constants
+MAX_FILE_SIZE = 25 * 1024 * 1024 * 1024  # 25GB
+LARGE_FILE_THRESHOLD = 500 * 1024 * 1024 # 500MB (Switch to DuckDB/Chunking)
+MAX_SAMPLE_ROWS = 10000
+SESSION_STORE = {} 
+BUILD_VERSION = "19:05" # Unique marker to verify build
+
+# Optional Dependencies
 try:
     import duckdb
     from duckdb_backend import DuckDBBackend
@@ -59,1289 +47,689 @@ except ImportError:
 try:
     from weasyprint import HTML
     WEASYPRINT_AVAILABLE = True
-except ImportError:
+except Exception:
     WEASYPRINT_AVAILABLE = False
 
-# ML Imports (Lazy load in function to speed up startup, but check here)
-try:
-    from sklearn.impute import SimpleImputer
-    from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
-    from sklearn.compose import ColumnTransformer
-    from sklearn.pipeline import Pipeline
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
+app = FastAPI(title="DataLyze - Premium EDA Tool")
 
-app = FastAPI(title="DataLyze — Premium EDA Tool")
+# Logging Setup
+import logging
+import sys
+import os
+import traceback
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Configuration
-MAX_FILE_SIZE = 25 * 1024 * 1024 * 1024  # 25GB in bytes
-LARGE_FILE_THRESHOLD = 1 * 1024 * 1024 * 1024  # 1GB - use DuckDB/Dask
-VERY_LARGE_THRESHOLD = 2 * 1024 * 1024 * 1024  # 2GB - force DuckDB
-CHUNK_SIZE = 100000  # Rows per chunk for streaming
-MAX_SAMPLE_ROWS = 50000  # Maximum rows to sample for visualization
-SUPPORTED_EXTENSIONS = ['.csv', '.tsv', '.txt', '.xlsx', '.xls', '.json', '.parquet']
-
-# Thread pool for parallel operations
-executor = ThreadPoolExecutor(max_workers=4)
-
-# Store for cleaned datasets (in-memory for simple demo, use Redis/DB for prod)
-cleaned_datasets_store = {}
-
-# ---------- Helpers ----------
-
-def safe_read_csv(s: str, sep=',', nrows=None):
+def get_log_path():
     try:
-        return pd.read_csv(io.StringIO(s), nrows=nrows)
+        if getattr(sys, 'frozen', False):
+            # If frozen, store log next to exe
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.getcwd()
+        return os.path.join(base_path, 'datalyze_debug.log')
     except Exception:
-        # try with python engine
-        return pd.read_csv(io.StringIO(s), engine='python', sep=sep, nrows=nrows)
+        return 'datalyze_debug.log'
 
+log_file = get_log_path()
 
-def optimize_dtypes(df: pd.DataFrame) -> pd.DataFrame:
-    """Optimize DataFrame memory usage by downcasting dtypes"""
-    for col in df.columns:
-        col_type = df[col].dtype
-        
-        if col_type != object:
-            c_min = df[col].min()
-            c_max = df[col].max()
-            
-            if str(col_type)[:3] == 'int':
-                if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
-                    df[col] = df[col].astype(np.int8)
-                elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
-                    df[col] = df[col].astype(np.int16)
-                elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
-                    df[col] = df[col].astype(np.int32)
-            else:
-                if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
-                    df[col] = df[col].astype(np.float32)
-        else:
-            # Convert low-cardinality strings to categorical
-            num_unique = df[col].nunique()
-            num_total = len(df[col])
-            if num_unique / num_total < 0.5:
-                df[col] = df[col].astype('category')
-    
-    return df
+try:
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+except Exception as e:
+    # If logging fails, just print to stderr (will show in console if open)
+    sys.stderr.write(f"Failed to setup logging: {e}\n")
 
-
-def smart_sample(df: pd.DataFrame, target_size: int = MAX_SAMPLE_ROWS) -> pd.DataFrame:
-    """Smart sampling that maintains data distribution"""
-    if len(df) <= target_size:
-        return df
-    
-    # Use random sampling with fixed seed for reproducibility
-    return df.sample(n=target_size, random_state=42)
-
-
-def profile_csv_chunked(filepath: str, chunksize: int = CHUNK_SIZE) -> Dict[str, Any]:
-    """Profile large CSV files in chunks without loading into memory"""
-    stats = {}
-    total_rows = 0
-    chunk_count = 0
-    
-    for chunk in pd.read_csv(filepath, chunksize=chunksize):
-        total_rows += len(chunk)
-        chunk_count += 1
-        
-        for col in chunk.columns:
-            if col not in stats:
-                stats[col] = {
-                    'count': 0,
-                    'missing': 0,
-                    'dtype': str(chunk[col].dtype),
-                    'unique_values': set()
-                }
-            
-            stats[col]['count'] += len(chunk[col])
-            stats[col]['missing'] += chunk[col].isnull().sum()
-            
-            # Track unique values (limit to avoid memory issues)
-            if len(stats[col]['unique_values']) < 1000:
-                stats[col]['unique_values'].update(chunk[col].dropna().unique())
-    
-    # Convert sets to counts
-    for col in stats:
-        stats[col]['unique'] = len(stats[col]['unique_values'])
-        del stats[col]['unique_values']
-    
-    return {'total_rows': total_rows, 'columns': stats}
-
-
-def select_backend(file_size: int, file_ext: str) -> str:
-    """
-    Choose optimal backend based on file characteristics
-    
-    Returns: 'pandas', 'dask', or 'duckdb'
-    """
-    if file_size < LARGE_FILE_THRESHOLD:
-        return 'pandas'  # Fast for <1GB
-    
-    elif file_size < VERY_LARGE_THRESHOLD:
-        # 1-2GB: Use Dask if available, else DuckDB
-        if DASK_AVAILABLE and file_ext in ['.csv', '.parquet']:
-            return 'dask'
-        elif DUCKDB_AVAILABLE and file_ext in ['.csv', '.parquet']:
-            return 'duckdb'
-        return 'pandas'  # Fallback
-    
-    else:
-        # >2GB: DuckDB is most efficient
-        if DUCKDB_AVAILABLE and file_ext in ['.csv', '.parquet']:
-            return 'duckdb'
-        elif DASK_AVAILABLE and file_ext in ['.csv', '.parquet']:
-            return 'dask'
-        return 'pandas'  # Fallback (will likely fail for very large files)
-
-
-def adaptive_sample_size(total_rows: int, file_size_mb: float) -> int:
-    """
-    Determine optimal sample size based on dataset characteristics
-    
-    Larger datasets get smaller samples to maintain performance
-    """
-    if total_rows < 10000:
-        return total_rows  # Use all data
-    
-    elif total_rows < 100000:
-        return 10000  # 10k sample
-    
-    elif total_rows < 1000000:
-        return 50000  # 50k sample
-    
-    elif file_size_mb < 1000:  # <1GB
-        return 100000  # 100k sample
-    
-    else:  # >1GB
-        return 50000  # Conservative for very large files
-
-
-def parse_uploaded_file(contents: bytes, filename: str, sample_rows: int = 5000):
-    """Return a dict of {name: DataFrame} — for single-sheet returns {'sheet1': df}
-    Tries to handle csv, tsv, xlsx, json (ndjson or json array), parquet.
-    Raises ValueError with descriptive messages for parsing failures.
-    """
-    name = filename.lower()
-    tmp = None
-    
-    # Check if file is empty
-    if len(contents) == 0:
-        raise ValueError('File is empty. Please upload a file with data.')
-    
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
-        if name.endswith('.csv') or name.endswith('.txt'):
-            s = None
-            try:
-                s = contents.decode('utf-8')
-            except UnicodeDecodeError:
-                try:
-                    s = contents.decode('latin1', errors='ignore')
-                except Exception:
-                    raise ValueError('Unable to decode file. Please ensure it is a valid text file with UTF-8 or Latin-1 encoding.')
-            try:
-                df = safe_read_csv(s, sep=',', nrows=sample_rows)
-                if df.empty:
-                    raise ValueError('CSV file contains no data rows.')
-                return {os.path.splitext(filename)[0]: df}
-            except Exception as e:
-                raise ValueError(f'Failed to parse CSV file: {str(e)}. Please ensure it is a valid CSV format.')
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
-        elif name.endswith('.tsv') or '\t' in contents.decode('utf-8', errors='ignore')[:200]:
-            s = contents.decode('utf-8', errors='ignore')
-            try:
-                df = safe_read_csv(s, sep='\t', nrows=sample_rows)
-                if df.empty:
-                    raise ValueError('TSV file contains no data rows.')
-                return {os.path.splitext(filename)[0]: df}
-            except Exception as e:
-                raise ValueError(f'Failed to parse TSV file: {str(e)}. Please ensure it is a valid tab-separated format.')
+# Static Files with versioning
+static_path = resource_path("static")
+if not os.path.exists(static_path):
+    os.makedirs(static_path, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_path), name="static")
 
-        elif name.endswith('.xlsx') or name.endswith('.xls'):
-            # write to temp file and use pandas.read_excel with sheet_name=None
-            try:
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1])
-                tmp.write(contents); tmp.close()
-                sheets = pd.read_excel(tmp.name, sheet_name=None)
-                # limit rows per sheet for safety
-                sheets = {k: v.head(sample_rows) for k,v in sheets.items()}
-                if not sheets or all(df.empty for df in sheets.values()):
-                    raise ValueError('Excel file contains no data.')
-                return sheets
-            except Exception as e:
-                if 'openpyxl' in str(e) or 'xlrd' in str(e):
-                    raise ValueError('Missing required library for Excel files. Please ensure openpyxl is installed.')
-                raise ValueError(f'Failed to parse Excel file: {str(e)}. Please ensure it is a valid Excel file.')
+templates = Jinja2Templates(directory=static_path)
 
-        elif name.endswith('.json'):
-            # try ndjson first
-            s = None
-            try:
-                s = contents.decode('utf-8')
-            except Exception:
-                try:
-                    s = contents.decode('latin1', errors='ignore')
-                except Exception:
-                    raise ValueError('Unable to decode JSON file. Please ensure it is valid UTF-8 encoded JSON.')
+# Ignore warnings
+warnings.filterwarnings('ignore')
+
+# --- Core Logic (Refactored) ---
+
+class DataProcessor:
+    def __init__(self):
+        self.executor = ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4))
+
+    def detect_column_types(self, df: pd.DataFrame) -> Dict[str, str]:
+        """Heuristic type detection"""
+        types = {}
+        for col in df.columns:
+            s = df[col].dropna()
+            if s.empty:
+                types[col] = 'unknown'
+                continue
             
+            # Boolean
+            if pd.api.types.is_bool_dtype(s) or set(s.unique()) <= {0, 1, True, False, 'True', 'False'}:
+                types[col] = 'boolean'
+                continue
+            
+            # Numeric
+            if pd.api.types.is_numeric_dtype(s):
+                types[col] = 'numeric'
+                continue
+            
+            # Datetime (Sampling for speed)
             try:
-                lines = [l for l in s.splitlines() if l.strip()]
-                if len(lines) > 1 and all(l.strip().startswith('{') for l in lines[:5]):
-                    # ndjson
-                    records = [json.loads(l) for l in lines[:sample_rows]]
-                    df = pd.json_normalize(records)
-                    if df.empty:
-                        raise ValueError('JSON file contains no data.')
-                    return {os.path.splitext(filename)[0]: df}
-                else:
-                    # try full json array
-                    try:
-                        obj = json.loads(s)
-                        if isinstance(obj, list):
-                            if not obj:
-                                raise ValueError('JSON array is empty.')
-                            df = pd.json_normalize(obj[:sample_rows])
-                            return {os.path.splitext(filename)[0]: df}
-                        elif isinstance(obj, dict):
-                            # single object -> flatten
-                            df = pd.json_normalize([obj])
-                            return {os.path.splitext(filename)[0]: df}
-                    except json.JSONDecodeError as e:
-                        raise ValueError(f'Invalid JSON format: {str(e)}')
-                    except Exception:
-                        pass
-                    # fallback to csv parse
-                    df = safe_read_csv(s, sep=',', nrows=sample_rows)
-                    return {os.path.splitext(filename)[0]: df}
-            except ValueError:
-                raise
-            except Exception as e:
-                raise ValueError(f'Failed to parse JSON file: {str(e)}. Please ensure it is valid JSON or NDJSON format.')
-
-        elif name.endswith('.parquet'):
-            try:
-                # pandas will use pyarrow/fastparquet
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.parquet')
-                tmp.write(contents); tmp.close()
-                df = pd.read_parquet(tmp.name)
-                if df.empty:
-                    raise ValueError('Parquet file contains no data.')
-                return {os.path.splitext(filename)[0]: df.head(sample_rows)}
-            except Exception as e:
-                if 'pyarrow' in str(e) or 'fastparquet' in str(e):
-                    raise ValueError('Missing required library for Parquet files. Please ensure pyarrow is installed.')
-                raise ValueError(f'Failed to parse Parquet file: {str(e)}. Please ensure it is a valid Parquet file.')
-
-        else:
-            # unknown extension — attempt csv then json
-            ext = os.path.splitext(filename)[1]
-            supported = ', '.join(SUPPORTED_EXTENSIONS)
-            raise ValueError(f'Unsupported file extension "{ext}". Supported formats: {supported}')
-    finally:
-        if tmp is not None:
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                pass
-
-
-def detect_column_types(df: pd.DataFrame) -> Dict[str, str]:
-    """Return a mapping column -> detected type: numeric, datetime, categorical, boolean, text, geo"""
-    types = {}
-    for col in df.columns:
-        ser = df[col]
-        # drop nulls for detection
-        s = ser.dropna()
-        if s.empty:
-            types[col] = 'unknown'
-            continue
-        # booleans
-        if pd.api.types.is_bool_dtype(s) or set(s.dropna().unique()) <= {0,1,True,False}:
-            types[col] = 'boolean'; continue
-        # numeric
-        if pd.api.types.is_numeric_dtype(s):
-            types[col] = 'numeric'; continue
-        # datetime
-        try:
-            parsed = pd.to_datetime(s.sample(min(len(s), min(100, len(s)))), errors='coerce', utc=True)
-            if parsed.notnull().sum() >= max(1, int(0.6 * len(parsed))):
-                types[col] = 'datetime'; continue
-        except Exception:
-            pass
-        # geo detection: lat/lon pairs
-        if col.lower() in ('lat','latitude') or col.lower() in ('lon','lng','longitude'):
-            types[col] = 'geo'; continue
-        # small cardinality -> categorical
-        unique_frac = s.nunique(dropna=True) / max(1, len(s))
-        if unique_frac < 0.05 and s.nunique() < 200:
-            types[col] = 'categorical'; continue
-        # text/varchar
-        if pd.api.types.is_string_dtype(s):
-            types[col] = 'text'; continue
-        # fallback
-        types[col] = 'unknown'
-    return types
-
-
-def safe_float(v):
-    if pd.isna(v) or np.isnan(v) or np.isinf(v):
-        return None
-    return float(v)
-
-def profile_dataframe(df: pd.DataFrame) -> Dict[str, Any]:
-    """Return a lightweight profile — per-column stats and dataset-level notes"""
-    profile = {}
-    total_rows = len(df)
-    profile['total_rows'] = int(total_rows)
-    profile['total_columns'] = int(df.shape[1])
-    col_types = detect_column_types(df)
-    profile['columns'] = {}
-    for col in df.columns:
-        ser = df[col]
-        non_null = ser.dropna()
-        col_prof = {
-            'type': col_types.get(col, 'unknown'),
-            'count': int(len(ser)),
-            'missing': int(ser.isnull().sum()),
-            'missing_pct': safe_float(ser.isnull().mean()),
-            'unique': int(ser.nunique(dropna=True)),
-        }
-        t = col_prof['type']
-        if t == 'numeric':
-            try:
-                s = pd.to_numeric(non_null, errors='coerce').dropna()
-                if not s.empty:
-                    col_prof.update({
-                        'mean': safe_float(s.mean()),
-                        'median': safe_float(s.median()),
-                        'std': safe_float(s.std(ddof=0)),
-                        'min': safe_float(s.min()),
-                        'max': safe_float(s.max())
-                    })
-            except Exception:
-                pass
-        elif t == 'datetime':
-            try:
-                s = pd.to_datetime(non_null, errors='coerce', utc=True).dropna()
-                if not s.empty:
-                    col_prof.update({
-                        'min': str(s.min()),
-                        'max': str(s.max())
-                    })
-            except Exception:
-                pass
-        elif t in ('categorical','text','boolean'):
-            try:
-                top = non_null.astype(str).value_counts().head(5).to_dict()
-                col_prof['top_values'] = {k: int(v) for k,v in top.items()}
+                sample = s.sample(min(len(s), 500), random_state=42)
+                parsed = pd.to_datetime(sample, errors='coerce', utc=True)
+                if parsed.notnull().mean() > 0.6:
+                    types[col] = 'datetime'
+                    continue
             except:
                 pass
-        profile['columns'][col] = col_prof
-    # quick notes
-    notes = []
-    if total_rows > 200000:
-        notes.append('Large dataset — profiling was sampled and some operations limited for performance')
-    profile['notes'] = notes
-    return profile
+            
+            # Geo
+            lower_col = col.lower()
+            if 'fat' in lower_col or 'lat' in lower_col or 'lon' in lower_col:
+                if pd.to_numeric(s, errors='coerce').notnull().all():
+                     types[col] = 'geo'
+                     continue
 
+            # Categorical vs Text
+            if s.nunique() / len(s) < 0.1 or s.nunique() < 20: 
+                types[col] = 'categorical'
+                continue
+                
+            types[col] = 'text'
+        return types
 
-def detect_duplicates(df: pd.DataFrame) -> Dict[str, Any]:
-    """Return duplicate stats"""
-    total_rows = len(df)
-    duplicates = df[df.duplicated()]
-    num_duplicates = len(duplicates)
-    
-    return {
-        'count': int(num_duplicates),
-        'percentage': safe_float(num_duplicates / max(1, total_rows)),
-        'samples': duplicates.head(5).to_dict(orient='records') if num_duplicates > 0 else []
+    def _profile_column(self, col: str, series: pd.Series, dtype: str) -> tuple:
+        """Worker for column profiling"""
+        stats = {
+            'type': dtype,
+            'missing': int(series.isnull().sum()),
+            'unique': int(series.nunique())
+        }
+        
+        if dtype == 'numeric':
+            stats.update({
+                'min': float(series.min()) if not series.empty else None,
+                'max': float(series.max()) if not series.empty else None,
+                'mean': float(series.mean()) if not series.empty else None,
+            })
+        elif dtype == 'categorical':
+            stats['top'] = series.value_counts().head(5).to_dict()
+            
+        return col, stats
+
+    def profile_dataframe(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Multi-threaded profiling of all columns and health check"""
+        col_types = self.detect_column_types(df)
+        
+        # Health Checks
+        duplicates = int(df.duplicated().sum())
+        health_issues = []
+        
+        if duplicates > 0:
+            health_issues.append({
+                'type': 'warning',
+                'title': f'{duplicates} Duplicate Rows',
+                'desc': 'Identical rows detected. Consider clearing them.'
+            })
+
+        profile = {
+            'total_rows': int(len(df)),
+            'total_columns': int(df.shape[1]),
+            'columns': {},
+            'duplicates': duplicates,
+            'health': health_issues,
+            'notes': []
+        }
+        
+        # Parallel execution for column stats
+        futures = {self.executor.submit(self._profile_column, col, df[col], col_types[col]): col for col in df.columns}
+        
+        for future in as_completed(futures):
+            col, stats = future.result()
+            profile['columns'][col] = stats
+            
+            # Additional column-level health checks
+            if stats['missing'] > 0:
+                health_issues.append({
+                    'type': 'info',
+                    'title': f'Missing: {col}',
+                    'desc': f'{stats["missing"]} records are empty.'
+                })
+            if stats['unique'] == 1 and len(df) > 1:
+                health_issues.append({
+                    'type': 'warning',
+                    'title': f'Constant: {col}',
+                    'desc': 'Column has only one value.'
+                })
+
+        if len(df) > 200000:
+            profile['notes'].append("Warning: Profiling sampled for performance.")
+            
+        return profile
+
+    def recommend_visualizations(self, df: pd.DataFrame, col_types: Dict[str, str]) -> List[Dict]:
+        """Rule-based Viz Recommendation Engine"""
+        recs = []
+        
+        # 1. Timeline (Datetime + Numeric)
+        date_cols = [c for c, t in col_types.items() if t == 'datetime']
+        num_cols = [c for c, t in col_types.items() if t == 'numeric']
+        cat_cols = [c for c, t in col_types.items() if t == 'categorical']
+        
+        if date_cols and num_cols:
+            recs.append({
+                'type': 'line',
+                'title': f'{num_cols[0]} over Time',
+                'x': date_cols[0],
+                'y': num_cols[0],
+                'reason': 'Found time-series data'
+            })
+            
+        # 2. Distribution (Numeric)
+        for col in num_cols[:2]:
+            recs.append({
+                'type': 'histogram',
+                'title': f'Distribution of {col}',
+                'column': col,
+                'reason': f'Analyze distribution of {col}'
+            })
+            # Box plot
+            recs.append({
+                'type': 'box',
+                'title': f'Box Plot of {col}',
+                'column': col,
+                'reason': 'Detect outliers'
+            })
+
+        # 3. Categorical Counts
+        for col in cat_cols[:2]:
+            recs.append({
+                'type': 'bar',
+                'title': f'Count by {col}',
+                'column': col,
+                'reason': f'Compare categories in {col}'
+            })
+            recs.append({
+                'type': 'pie',
+                'title': f'Market Share: {col}',
+                'column': col,
+                'reason': 'Part-to-whole relationship'
+            })
+            
+        # 4. Correlation (Num vs Num)
+        if len(num_cols) >= 2:
+            recs.append({
+                'type': 'scatter',
+                'title': f'{num_cols[0]} vs {num_cols[1]}',
+                'x': num_cols[0],
+                'y': num_cols[1],
+                'reason': 'Correlation check'
+            })
+            
+        return recs
+
+    def merge_datasets(self, df_left: pd.DataFrame, df_right: pd.DataFrame, 
+                       left_on: str, right_on: str, how: str = 'inner') -> pd.DataFrame:
+        """Merge two dataframes with memory safety and DuckDB efficiency"""
+        if left_on not in df_left.columns:
+            raise ValueError(f"Column '{left_on}' not found in primary dataset")
+        if right_on not in df_right.columns:
+            raise ValueError(f"Column '{right_on}' not found in secondary dataset")
+
+        # --- Memory Guard: Prevent Cartesian Explosion ---
+        # Very large joins (e.g. many duplicates on both sides) crash standard RAM.
+        # Estimate row count using value frequency overlap.
+        try:
+            l_counts = df_left[left_on].value_counts().head(50)
+            r_counts = df_right[right_on].value_counts().head(50)
+            
+            est_explosion = 0
+            for val, count in l_counts.items():
+                if val in r_counts:
+                    est_explosion += count * r_counts[val]
+            
+            # If top 50 keys alone create 20M+ rows, it's likely a dangerous merge
+            if est_explosion > 20_000_000:
+                raise MemoryError(f"Merge safety limit reached. This join would create too many rows (est. >{est_explosion}). Ensure your keys are unique or filter the data first.")
+        except Exception as e:
+            if isinstance(e, MemoryError): raise e
+            logging.warning(f"Merge guard check failed: {e}")
+
+        if left_on == right_on:
+            # Drop the redundant key column from the right
+            cols_to_keep = [col for col in merged.columns if not col.endswith(':1')]
+            merged = merged[cols_to_keep]
+
+        return merged
+
+    def merge_datasets(self, df_left: pd.DataFrame, df_right: pd.DataFrame, 
+                       left_on: str, right_on: str, how: str = 'inner') -> pd.DataFrame:
+        """Merge two dataframes with multi-key support, memory safety and DuckDB efficiency"""
+        # Parse potential multi-keys
+        l_keys = [k.strip() for k in left_on.split(',') if k.strip()]
+        r_keys = [k.strip() for k in right_on.split(',') if k.strip()]
+        
+        if len(l_keys) != len(r_keys):
+            raise ValueError(f"Number of keys must match (Left: {len(l_keys)}, Right: {len(r_keys)})")
+
+        for k in l_keys:
+            if k not in df_left.columns: raise ValueError(f"Primary key '{k}' not found")
+        for k in r_keys:
+            if k not in df_right.columns: raise ValueError(f"Secondary key '{k}' not found")
+
+        # --- Memory Guard ---
+        try:
+            # Quick check on first key for explosion
+            l_counts = df_left[l_keys[0]].value_counts().head(20)
+            r_counts = df_right[r_keys[0]].value_counts().head(20)
+            est = sum(l_counts.get(k, 0) * r_counts.get(k, 0) for k in l_counts.index if k in r_counts.index)
+            if est > 20_000_000:
+                raise MemoryError(f"Safety Limit: This join is too large (est. >{est} rows).")
+        except MemoryError as e: raise e
+        except: pass
+
+        # --- DuckDB Join ---
+        import duckdb
+        con = duckdb.connect(':memory:')
+        try:
+            sql_how = how.upper() if how != 'outer' else 'FULL'
+            
+            # Construct ON clause
+            on_clause = " AND ".join([f'df_left."{lk}" = df_right."{rk}"' for lk, rk in zip(l_keys, r_keys)])
+            
+            # Select columns to handle collisions (suffixes)
+            # Find overlapping columns (excluding keys)
+            l_cols = set(df_left.columns)
+            r_cols = set(df_right.columns)
+            common = (l_cols & r_cols) - set(l_keys) - set(r_keys)
+            
+            select_parts = []
+            for col in df_left.columns:
+                select_parts.append(f'df_left."{col}"')
+            for col in df_right.columns:
+                if col in common:
+                    select_parts.append(f'df_right."{col}" AS "{col}_secondary"')
+                elif col not in l_keys and col not in r_keys:
+                    select_parts.append(f'df_right."{col}"')
+            
+            query = f"""
+            SELECT {', '.join(select_parts)}
+            FROM df_left 
+            {sql_how} JOIN df_right ON {on_clause}
+            """
+            return con.execute(query).df()
+        except Exception as e:
+            logging.error(f"DuckDB fail: {e}")
+            return pd.merge(df_left, df_right, left_on=l_keys, right_on=r_keys, how=how, suffixes=('', '_secondary'))
+        finally: con.close()
+
+processor = DataProcessor()
+
+# --- Helpers ---
+
+def select_backend(file_size, ext):
+    if file_size > LARGE_FILE_THRESHOLD and ext in ['.csv', '.parquet'] and DUCKDB_AVAILABLE:
+        return 'duckdb'
+    return 'pandas'
+
+def save_to_session(session_id, df, filename):
+    SESSION_STORE[session_id] = {
+        'df': df,
+        'filename': filename,
+        'timestamp': pd.Timestamp.now()
     }
+    # Simple Cleanup: Keep instances low
+    if len(SESSION_STORE) > 10:
+        oldest = min(SESSION_STORE.keys(), key=lambda k: SESSION_STORE[k]['timestamp'])
+        del SESSION_STORE[oldest]
 
-def detect_quality_issues(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    """Return list of potential issues"""
-    issues = []
-    # Check for empty columns
-    for col in df.columns:
-        missing = df[col].isnull().mean()
-        if missing > 0.4:
-            issues.append({'type': 'critical', 'column': col, 'message': f'High missing values ({missing:.1%})'})
-        elif missing > 0.1:
-            issues.append({'type': 'warning', 'column': col, 'message': f'Identify missing values ({missing:.1%})'})
-            
-    # Check for constant columns
-    for col in df.columns:
-        if df[col].nunique() <= 1 and len(df) > 1:
-            issues.append({'type': 'warning', 'column': col, 'message': 'Constant column (zero variance)'})
-            
-    return issues
+def get_from_session(session_id):
+    return SESSION_STORE.get(session_id)
 
-def preprocess_dataset(df: pd.DataFrame, options: Dict[str, bool]) -> pd.DataFrame:
-    """Apply cleaning operations"""
-    df_clean = df.copy()
-    
-    # 1. Drop duplicates
-    if options.get('remove_duplicates'):
-        df_clean = df_clean.drop_duplicates()
-        
-    # 2. Handle missing values
-    if options.get('impute_missing'):
-        # Numeric -> median
-        numeric_cols = df_clean.select_dtypes(include=[np.number]).columns
-        for col in numeric_cols:
-            if df_clean[col].isnull().any():
-                df_clean[col] = df_clean[col].fillna(df_clean[col].median())
-        
-        # Categorical -> mode
-        cat_cols = df_clean.select_dtypes(include=['object', 'category']).columns
-        for col in cat_cols:
-            if df_clean[col].isnull().any():
-                if not df_clean[col].mode().empty:
-                    df_clean[col] = df_clean[col].fillna(df_clean[col].mode()[0])
-                    
-    # 3. Drop constant columns
-    if options.get('drop_constant'):
-        cols_to_drop = [c for c in df_clean.columns if df_clean[c].nunique() <= 1]
-        df_clean = df_clean.drop(columns=cols_to_drop)
-        
-    return df_clean
-
-
-def recommend_visualizations(df: pd.DataFrame, col_types: Dict[str,str]) -> List[Dict[str,Any]]:
-    """Return a list of recommended visualizations based on detected types and cardinalities"""
-    recs = []
-    # detect time series candidates
-    time_cols = [c for c,t in col_types.items() if t == 'datetime']
-    numeric_cols = [c for c,t in col_types.items() if t == 'numeric']
-    cat_cols = [c for c,t in col_types.items() if t == 'categorical']
-    geo_cols = [c for c,t in col_types.items() if t == 'geo']
-
-    if time_cols and numeric_cols:
-        recs.append({'type':'line', 'x': time_cols[0], 'y': numeric_cols[:3], 'reason':'Datetime + numeric columns -> time series'})
-    if numeric_cols:
-        for n in numeric_cols[:6]:
-            recs.append({'type':'histogram', 'column': n, 'reason':'Numeric distribution'})
-    if len(numeric_cols) >= 2:
-        recs.append({'type':'scatter', 'x': numeric_cols[0], 'y': numeric_cols[1], 'reason':'Two numeric columns -> scatter'})
-    if cat_cols:
-        for c in cat_cols[:6]:
-            # Recommend Pie chart if cardinality is low (<= 10)
-            if df[c].nunique() <= 10:
-                 recs.append({'type':'pie', 'column': c, 'reason':'Categorical composition (Pie)'})
-            else:
-                 recs.append({'type':'bar', 'column': c, 'reason':'Categorical counts'})
-    if geo_cols:
-        recs.append({'type':'map', 'lat': [c for c in geo_cols if 'lat' in c.lower()][0] if any('lat' in c.lower() for c in geo_cols) else geo_cols[0],
-                    'lon': [c for c in geo_cols if 'lon' in c.lower()][0] if any('lon' in c.lower() for c in geo_cols) else None,
-                    'reason':'Geo columns -> scatter map'})
-    # correlation heatmap if many numerics
-    if len(numeric_cols) >= 2:
-        recs.append({'type':'heatmap', 'columns': numeric_cols[:12], 'reason':'Correlation/heatmap for numeric columns'})
-    return recs
-
-# ---------- Routes ----------
+# --- Routes ---
 
 @app.get('/', response_class=HTMLResponse)
-async def index():
-    with open('static/index.html', 'r', encoding='utf-8') as f:
-        return f.read()
+async def index(request: Request):
+    try:
+        return templates.TemplateResponse("index.html", {
+            "request": request, 
+            "v": f"{BUILD_VERSION}_{int(time.time())}"
+        })
+    except Exception as e:
+        return f"<h1>Critical Error</h1><p>{e}</p>"
 
 @app.post('/upload')
-async def upload(file: UploadFile = File(...), sample_rows: int = Form(5000)):
-    # Validate file is provided
+async def upload_file(file: UploadFile = File(...), session_id: str = Form(None)):
     if not file.filename:
-        return JSONResponse({
-            'error': 'No file provided',
-            'suggestion': 'Please select a file to upload'
-        }, status_code=400)
-    
-    # Validate file extension
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in SUPPORTED_EXTENSIONS:
-        return JSONResponse({
-            'error': f'Unsupported file type: {ext}',
-            'suggestion': f'Please upload one of these formats: {', '.join(SUPPORTED_EXTENSIONS)}'
-        }, status_code=400)
-    
-    # Validate file size (content-length header if available, otherwise check during stream)
-    content_length = file.size
-    if content_length and content_length > MAX_FILE_SIZE:
-        size_gb = content_length / (1024 * 1024 * 1024)
-        return JSONResponse({
-            'error': f'File size ({size_gb:.1f}GB) exceeds maximum limit of 25GB',
-            'suggestion': 'Please upload a smaller file'
-        }, status_code=400)
-    
-    file_size = 0
-    temp_file_path = None
-    
+        return JSONResponse({'error': 'No file selected'}, 400)
+
     try:
-        # Stream file to temporary disk storage
+        # Generate Session ID if new
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
+        # Save to temp
+        ext = os.path.splitext(file.filename)[1].lower()
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            temp_file_path = tmp.name
-            # Copy in chunks to avoid memory issues
-            import shutil
             shutil.copyfileobj(file.file, tmp)
-            file_size = os.path.getsize(temp_file_path)
-    except Exception as e:
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.unlink(temp_file_path)
-        return JSONResponse({'error': f'Upload failed: {str(e)}'}, status_code=500)
-
-    # Re-validate size after upload
-    if file_size > MAX_FILE_SIZE:
-        os.unlink(temp_file_path)
-        return JSONResponse({
-            'error': 'File size exceeds maximum limit of 25GB',
-        }, status_code=400)
-
-    if file_size == 0:
-        os.unlink(temp_file_path)
-        return JSONResponse({
-            'error': 'File is empty',
-        }, status_code=400)
-    
-    # Select optimal backend
-    backend = select_backend(file_size, ext)
-    is_large_file = file_size > LARGE_FILE_THRESHOLD
-    file_size_mb = file_size / (1024 * 1024)
-    
-    # Process based on backend
-    try:
-        if backend == 'duckdb' and ext in ['.csv', '.parquet']:
-             # Use DuckDB backend with the temp file
-            with DuckDBBackend(temp_file_path) as db:
-                load_result = db.load_file()
-                if not load_result['success']:
-                    raise ValueError(f"DuckDB loading failed: {load_result['error']}")
-                
-                total_rows = load_result['rows']
-                sample_size = adaptive_sample_size(total_rows, file_size_mb)
-                df = db.get_sample(n=sample_size, method='random')
-                original_rows = total_rows
-                
-            # Create sheets dict for compatibility
-            sheets = {'sheet1': df}
-            
-        else:
-            # For pandas, we need to read the file content from the temp file
-            # This is less efficient for >1GB files but necessary if not using DuckDB
-            with open(temp_file_path, 'rb') as f:
-                contents = f.read()
-            sheets = parse_uploaded_file(contents, file.filename, sample_rows=sample_rows if not is_large_file else MAX_SAMPLE_ROWS)
-            original_rows = len(sheets[list(sheets.keys())[0]]) # Approx for non-DuckDB
-            
-    except Exception as e:
-        if os.path.exists(temp_file_path):
-             os.unlink(temp_file_path)
-        return JSONResponse({
-            'error': str(e),
-            'suggestion': 'Processing failed. Try a different format.'
-        }, status_code=500)
-    finally:
-        # Clean up temp file
-        if os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except:
-                pass
+            tmp_path = tmp.name
         
-    # coerce columns to strings
-    df.columns = [str(c) for c in df.columns]
+        file_size = os.path.getsize(tmp_path)
+        backend = select_backend(file_size, ext)
+        
+        # Load Data
+        df = None
+        if backend == 'duckdb':
+            with DuckDBBackend(tmp_path) as db:
+                res = db.load_file()
+                if res['success']:
+                    df = db.get_sample(n=MAX_SAMPLE_ROWS) # Load sample for analysis
+                    # Note: DuckDB handling for merge/clean needs more complex connection management
+        
+        if df is None:
+            # Pandas fallback
+            if ext == '.csv':
+                df = pd.read_csv(tmp_path, nrows=None if file_size < LARGE_FILE_THRESHOLD else 100000)
+            elif ext == '.xlsx':
+                df = pd.read_excel(tmp_path)
+            elif ext == '.parquet':
+                df = pd.read_parquet(tmp_path)
+            elif ext == '.json':
+                df = pd.read_json(tmp_path)
+            else:
+                # Text/TSV fallback
+                try:
+                    df = pd.read_csv(tmp_path, sep=None, engine='python')
+                except:
+                    os.unlink(tmp_path)
+                    return JSONResponse({'error': 'Unsupported file format'}, 400)
 
-    # lightweight coercions: try numeric conversion where many values look numeric
-    numeric_cols = []
-    for col in df.columns:
-        coerced = pd.to_numeric(df[col], errors='coerce')
-        if coerced.notnull().sum() >= max(1, int(0.5 * len(coerced))):
-            df[col] = coerced
-            numeric_cols.append(col)
-    # try parse datetimes
-    for col in df.columns:
-        if col in numeric_cols: continue
-        coerced = pd.to_datetime(df[col], errors='coerce', utc=True)
-        if coerced.notnull().sum() >= max(1, int(0.5 * len(coerced))):
-            df[col] = coerced
+        # Cleanup
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
-    profile = profile_dataframe(df)
-    col_types = detect_column_types(df)
-    recs = recommend_visualizations(df, col_types)
+        # Process
+        df.columns = df.columns.astype(str) # Ensure string columns
+        
+        # Profile
+        profile = processor.profile_dataframe(df)
+        col_types = processor.detect_column_types(df)
+        recs = processor.recommend_visualizations(df, col_types)
+        
+        # Preview
+        preview = json.loads(df.head(1000).to_json(orient='records', date_format='iso', default_handler=str))
 
-    # Prepare preview data (convert to json-friendly)
-    # Use pandas to_json for robust serialization of NaNs, Infinity, and Timestamps
-    df_preview = df.head(sample_rows).copy()
-    try:
-        # orient='records' gives list of dicts
-        # date_format='iso' converts timestamps to standard ISO strings
-        # double_precision=15 preserves float precision
-        # default_handler=str handles unknown objects
-        json_str = df_preview.to_json(orient='records', date_format='iso', double_precision=15, default_handler=str)
-        preview = json.loads(json_str)
+        # Save session
+        save_to_session(session_id, df, file.filename)
+
+        return JSONResponse({
+            'session_id': session_id,
+            'filename': file.filename,
+            'total_rows': len(df),
+            'columns': list(df.columns),
+            'profile': profile,
+            'recommendations': recs,
+            'preview': preview,
+            'col_types': col_types
+        })
+
     except Exception as e:
-        # Fallback if to_json fails (rare)
-        print(f"Serialization warning: {e}")
-        df_preview = df_preview.astype(str)
-        preview = df_preview.to_dict(orient='records')
+        logging.exception("Upload failed")
+        return JSONResponse({'error': str(e)}, 500)
 
-    response = {
-        'filename': file.filename,
-        'headers': list(df.columns),
-        'data_preview': preview,
-        'total_rows': int(original_rows),  # Original row count before sampling
-        'sampled_rows': int(len(df)),  # Actual rows used for visualization
-        'is_sampled': original_rows > len(df),
-        'is_large_file': is_large_file,
-        'file_size_mb': round(file_size_mb, 2),
-        'backend': backend,  # Show which backend was used
-        'profile': profile,
-        'column_types': col_types,
-        'recommendations': recs,
-        'duplicates': detect_duplicates(df),
-        'quality_issues': detect_quality_issues(df)
-    }
-    return JSONResponse(response)
+@app.post('/merge')
+async def merge_datasets(
+    primary_id: str = Form(...),
+    secondary_files: List[UploadFile] = File(...),
+    left_key: str = Form(...),
+    right_key: str = Form(...),
+    how: str = Form('inner')
+):
+    """Merge one or more uploaded files with an existing session dataset"""
+    try:
+        session_data = get_from_session(primary_id)
+        if not session_data: return JSONResponse({'error': 'Primary session expired'}, 404)
+        
+        # Process files one by one (Sequential merge)
+        for s_file in secondary_files:
+            ext = os.path.splitext(s_file.filename)[1].lower()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                shutil.copyfileobj(s_file.file, tmp)
+                tmp_path = tmp.name
+                
+            try:
+                if ext == '.csv': df_sec = pd.read_csv(tmp_path)
+                elif ext == '.xlsx': df_sec = pd.read_excel(tmp_path)
+                elif ext == '.parquet': df_sec = pd.read_parquet(tmp_path)
+                else: df_sec = pd.read_csv(tmp_path, sep=None, engine='python')
+                
+                # Apply merge
+                session_data['df'] = processor.merge_datasets(session_data['df'], df_sec, left_key, right_key, how)
+            finally:
+                if os.path.exists(tmp_path): os.unlink(tmp_path)
+        
+        session_data['filename'] = f"merged_result_{int(time.time())}.csv"
+        df_final = session_data['df']
 
+        return JSONResponse({
+            'success': True,
+            'total_rows': len(df_final),
+            'columns': list(df_final.columns),
+            'filename': session_data['filename']
+        })
 
-@app.post('/preprocess')
-async def preprocess_data(
-    file_id: str = Form(None), # Not used in this stateless version, we re-upload or would need persistence. 
-    # For this single-file demo, we will accept the file again OR just assume the user re-uploads.
-    # To make it "smooth", let's assume the user sends the file again for preprocessing OR we cache the last upload.
-    # Let's simple-store the last dataframe in memory for this demo session or accept file again.
-    # BETTER APPROACH for this stateless app: User re-uploads file with options.
-    file: UploadFile = File(...),
+    except Exception as e:
+        logging.exception("Merge failed")
+        return JSONResponse({'error': str(e)}, 500)
+
+@app.post('/clean')
+async def clean_data(
+    session_id: str = Form(...),
     remove_duplicates: bool = Form(False),
     impute_missing: bool = Form(False),
     drop_constant: bool = Form(False)
 ):
     try:
-        contents = await file.read()
-        sheets = parse_uploaded_file(contents, file.filename, sample_rows=1000000) # Read all for cleaning
-        df = sheets[list(sheets.keys())[0]]
+        data = get_from_session(session_id)
+        if not data: return JSONResponse({'error': 'Session expired'}, 404)
         
-        # Preprocess
-        options = {
-            'remove_duplicates': remove_duplicates,
-            'impute_missing': impute_missing,
-            'drop_constant': drop_constant
-        }
-        df_clean = preprocess_dataset(df, options)
+        df = data['df']
+        rows_before = len(df)
         
-        # Store for download
-        download_id = str(uuid.uuid4())
-        cleaned_datasets_store[download_id] = {
-            'df': df_clean,
-            'filename': f"clean_{file.filename}"
-        }
+        if remove_duplicates:
+            df = df.drop_duplicates()
+            
+        if drop_constant:
+            df = df.loc[:, df.nunique() > 1]
+            
+        if impute_missing:
+            # Simple imputation: Median for numeric, Mode for others
+            for col in df.columns:
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    df[col] = df[col].fillna(df[col].median())
+                else:
+                    df[col] = df[col].fillna(df[col].mode()[0] if not df[col].mode().empty else "Unknown")
         
-        # Return summary of cleaned data
+        # Update session
+        data['df'] = df
+        
         return JSONResponse({
             'status': 'success',
-            'original_rows': len(df),
-            'cleaned_rows': len(df_clean),
-            'download_id': download_id,
-            'download_url': f"/download/{download_id}"
+            'rows_before': rows_before,
+            'rows_after': len(df),
+            'preview': json.loads(df.head(100).to_json(orient='records', date_format='iso', default_handler=str))
         })
-        
+
     except Exception as e:
-        return JSONResponse({'error': str(e)}, status_code=400)
+        return JSONResponse({'error': str(e)}, 500)
 
-@app.get('/download/{download_id}')
-async def download_clean(download_id: str, format: str = 'csv'):
-    """Download cleaned dataset in specified format"""
-    if download_id not in cleaned_datasets_store:
-        return JSONResponse({'error': 'Download ID not found or expired'}, status_code=404)
-    
-    data = cleaned_datasets_store[download_id]
-    df = data['df']
-    orig_name = data['filename']
-    base_name = orig_name.rsplit('.', 1)[0] if '.' in orig_name else orig_name
-    
-    # Support multiple formats
-    if format == 'csv':
-        stream = io.StringIO()
-        df.to_csv(stream, index=False)
-        content = stream.getvalue()
-        media_type = "text/csv"
-        filename = f"{base_name}.csv"
+@app.post('/auto_prep_ml')
+async def auto_prep_ml(session_id: str = Form(...), target_col: str = Form(None)):
+    try:
+        data = get_from_session(session_id)
+        if not data: return JSONResponse({'error': 'Session expired'}, 404)
         
-    elif format == 'xlsx':
-        output = io.BytesIO()
-        df.to_excel(output, index=False, engine='openpyxl')
-        output.seek(0)
-        content = output.getvalue()
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"{base_name}.xlsx"
+        df = data['df'].copy()
         
-    elif format == 'json':
-        content = df.to_json(orient='records', indent=2)
-        media_type = "application/json"
-        filename = f"{base_name}.json"
+        # Basic Auto-Prep Pipeline
+        # Fill missing numeric with median
+        num_cols = df.select_dtypes(include=np.number).columns
+        df[num_cols] = df[num_cols].fillna(df[num_cols].median())
         
-    elif format == 'parquet':
-        output = io.BytesIO()
-        df.to_parquet(output, index=False, engine='pyarrow')
-        output.seek(0)
-        content = output.getvalue()
-        media_type = "application/octet-stream"
-        filename = f"{base_name}.parquet"
+        # Fill missing cat with 'Missing'
+        cat_cols = df.select_dtypes(include='object').columns
+        df[cat_cols] = df[cat_cols].fillna('Missing')
         
-    else:
-        return JSONResponse({'error': 'Unsupported format. Use: csv, xlsx, json, or parquet'}, status_code=400)
-    
-    response = Response(content=content, media_type=media_type)
-    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
-    return response
+        # One-Hot Encode (limit cardinality)
+        if len(df) < 100000: # Only for smaller datasets in this demo
+            df = pd.get_dummies(df, columns=[c for c in cat_cols if df[c].nunique() < 20], dummy_na=True)
+            
+        buffer = io.StringIO()
+        df.to_csv(buffer, index=False)
+        buffer.seek(0)
+        
+        return Response(content=buffer.getvalue(), media_type="text/csv", 
+                       headers={"Content-Disposition": f"attachment; filename=ml_ready_data.csv"})
 
+    except Exception as e:
+        logging.exception("Auto Prep failed")
+        return JSONResponse({'error': f"Auto-Prep failed: {str(e)}"}, 500)
+
+@app.get('/download/{session_id}')
+async def download_current_data_get(session_id: str):
+    return await download_current_data(session_id)
+
+@app.post('/download')
+async def download_current_data(session_id: str = Form(...)):
+    """General purpose endpoint to download the current session's dataset (Streaming)"""
+    try:
+        data = get_from_session(session_id)
+        if not data: return JSONResponse({'error': 'Session expired'}, 404)
+        
+        df = data['df']
+        filename = data.get('filename', 'dataset.csv')
+        if not filename.endswith('.csv'): filename += '.csv'
+
+        # Streaming response for large files
+        def iter_csv():
+            buffer = io.StringIO()
+            # Header
+            df.head(0).to_csv(buffer, index=False)
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+            
+            # Chunks
+            chunk_size = 10000
+            for i in range(0, len(df), chunk_size):
+                df.iloc[i:i+chunk_size].to_csv(buffer, index=False, header=False)
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+
+        from fastapi.responses import StreamingResponse
+        return StreamingResponse(
+            iter_csv(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except Exception as e:
+        logging.exception("Download failed")
+        return JSONResponse({'error': f"Download failed: {str(e)}"}, 500)
 
 @app.post('/generate_report')
-async def generate_report(file: UploadFile = File(...)):
-    """Generate a comprehensive analysis report"""
+async def generate_report(session_id: str = Form(...)):
     try:
-        # Read file
-        contents = await file.read()
+        data = get_from_session(session_id)
+        if not data: return JSONResponse({'error': 'Session expired'}, 404)
         
-        # Parse file (reuse existing logic)
-        sheets = parse_uploaded_file(contents, file.filename, sample_rows=10000)
-        primary_name = list(sheets.keys())[0]
-        df = sheets[primary_name].copy()
+        df = data['df']
         
-        # Optimize and sample if needed
-        if len(df) > 50000:
-            df = smart_sample(df, 50000)
+        # Generate simple HTML report
+        stats_html = df.describe().to_html(classes="table")
         
-        df.columns = [str(c) for c in df.columns]
-        
-        # Get analysis
-        col_types = infer_column_types(df)
-        profile = profile_columns(df, col_types)
-        duplicates = detect_duplicates(df)
-        quality_issues = detect_quality_issues(df)
-        
-        # Generate HTML report
-        html_content = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Dataset Analysis Report - {file.filename}</title>
-    <style>
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 40px;
-            background: #f5f5f5;
-        }}
-        .header {{
-            background: linear-gradient(135deg, #6366f1, #a855f7);
-            color: white;
-            padding: 30px;
-            border-radius: 12px;
-            margin-bottom: 30px;
-        }}
-        .header h1 {{
-            margin: 0;
-            font-size: 2.5rem;
-        }}
-        .header p {{
-            margin: 10px 0 0 0;
-            opacity: 0.9;
-        }}
-        .section {{
-            background: white;
-            padding: 25px;
-            margin-bottom: 20px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }}
-        .section h2 {{
-            color: #6366f1;
-            margin-top: 0;
-            border-bottom: 2px solid #e5e7eb;
-            padding-bottom: 10px;
-        }}
-        .stats-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 20px 0;
-        }}
-        .stat-card {{
-            background: #f9fafb;
-            padding: 20px;
-            border-radius: 8px;
-            border-left: 4px solid #6366f1;
-        }}
-        .stat-label {{
-            font-size: 0.9rem;
-            color: #6b7280;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }}
-        .stat-value {{
-            font-size: 2rem;
-            font-weight: bold;
-            color: #1f2937;
-            margin-top: 5px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin: 15px 0;
-        }}
-        th, td {{
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e5e7eb;
-        }}
-        th {{
-            background: #f9fafb;
-            font-weight: 600;
-            color: #374151;
-        }}
-        .badge {{
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }}
-        .badge-numeric {{ background: #dbeafe; color: #1e40af; }}
-        .badge-categorical {{ background: #fce7f3; color: #9f1239; }}
-        .badge-datetime {{ background: #d1fae5; color: #065f46; }}
-        .issue-warning {{ color: #f59e0b; }}
-        .issue-critical {{ color: #ef4444; }}
-        .footer {{
-            text-align: center;
-            color: #6b7280;
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid #e5e7eb;
-        }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>📊 Dataset Analysis Report</h1>
-        <p><strong>File:</strong> {file.filename}</p>
-        <p><strong>Generated:</strong> {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-    </div>
-    
-    <div class="section">
-        <h2>📈 Dataset Overview</h2>
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Total Rows</div>
-                <div class="stat-value">{len(df):,}</div>
+        html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: 'Helvetica', sans-serif; padding: 40px; color: #333; }}
+                h1 {{ color: #4F46E5; border-bottom: 2px solid #4F46E5; padding-bottom: 10px; }}
+                h2 {{ margin-top: 30px; color: #1e293b; }}
+                .table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+                .table th, .table td {{ padding: 8px; border: 1px solid #ddd; text-align: right; }}
+                .table th {{ background-color: #f8fafc; }}
+                .summary-box {{ background: #f1f5f9; padding: 20px; border-radius: 8px; margin-bottom: 30px; }}
+            </style>
+        </head>
+        <body>
+            <h1>Data Analysis Report</h1>
+            <div class="summary-box">
+                <p><strong>Filename:</strong> {data['filename']}</p>
+                <p><strong>Total Rows:</strong> {len(df)}</p>
+                <p><strong>Total Columns:</strong> {len(df.columns)}</p>
+                <p><strong>Generated:</strong> {pd.Timestamp.now()}</p>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Total Columns</div>
-                <div class="stat-value">{len(df.columns)}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Duplicates</div>
-                <div class="stat-value">{duplicates['count']}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Quality Issues</div>
-                <div class="stat-value">{len(quality_issues)}</div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="section">
-        <h2>📋 Column Information</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Column Name</th>
-                    <th>Type</th>
-                    <th>Missing</th>
-                    <th>Unique</th>
-                    <th>Details</th>
-                </tr>
-            </thead>
-            <tbody>
-"""
-        
-        # Add column details
-        for col, info in profile.items():
-            col_type = col_types.get(col, 'unknown')
-            badge_class = f"badge-{col_type}" if col_type in ['numeric', 'categorical', 'datetime'] else 'badge'
             
-            details = ""
-            if col_type == 'numeric':
-                details = f"Mean: {info.get('mean', 'N/A'):.2f}" if isinstance(info.get('mean'), (int, float)) else ""
-            elif col_type == 'categorical':
-                details = f"Top: {info.get('top', 'N/A')}"
-            elif col_type == 'datetime':
-                details = f"Range: {info.get('min', 'N/A')} to {info.get('max', 'N/A')}"
+            <h2>Statistical Summary</h2>
+            {stats_html}
             
-            html_content += f"""
-                <tr>
-                    <td><strong>{col}</strong></td>
-                    <td><span class="badge {badge_class}">{col_type}</span></td>
-                    <td>{info.get('missing', 0)} ({info.get('missing_pct', 0):.1f}%)</td>
-                    <td>{info.get('unique', 0)}</td>
-                    <td>{details}</td>
-                </tr>
-"""
+            <h2>Data Structure</h2>
+            <ul>
+                {''.join(f"<li><strong>{c}</strong>: {t}</li>" for c, t in df.dtypes.items())}
+            </ul>
+        </body>
+        </html>
+        """
         
-        html_content += """
-            </tbody>
-        </table>
-    </div>
-"""
-        
-        # Quality issues section
-        if quality_issues:
-            html_content += """
-    <div class="section">
-        <h2>⚠️ Data Quality Issues</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Column</th>
-                    <th>Issue</th>
-                    <th>Severity</th>
-                </tr>
-            </thead>
-            <tbody>
-"""
-            for issue in quality_issues:
-                severity_class = 'issue-critical' if issue['severity'] == 'critical' else 'issue-warning'
-                html_content += f"""
-                <tr>
-                    <td><strong>{issue['column']}</strong></td>
-                    <td>{issue['issue']}</td>
-                    <td class="{severity_class}">{issue['severity'].upper()}</td>
-                </tr>
-"""
-            html_content += """
-            </tbody>
-        </table>
-    </div>
-"""
-        
-        html_content += """
-    <div class="footer">
-        <p>Generated by Dataset Visualization & Preprocessing Tool</p>
-        <p>Powered by FastAPI, Pandas, and DuckDB</p>
-    </div>
-</body>
-</html>
-"""
-        
-        # Convert to PDF
         if WEASYPRINT_AVAILABLE:
             pdf_io = io.BytesIO()
-            HTML(string=html_content).write_pdf(pdf_io)
+            HTML(string=html).write_pdf(pdf_io)
             pdf_io.seek(0)
-            
-            return Response(
-                content=pdf_io.getvalue(),
-                media_type='application/pdf',
-                headers={
-                    'Content-Disposition': f'attachment; filename="report_{file.filename.rsplit(".", 1)[0]}.pdf"'
-                }
-            )
+            return Response(content=pdf_io.getvalue(), media_type="application/pdf", 
+                           headers={"Content-Disposition": "attachment; filename=report.pdf"})
         else:
-            # Fallback to HTML if WeasyPrint is not installed
-            return HTMLResponse(
-                content=html_content,
-                headers={
-                    'Content-Disposition': f'attachment; filename="report_{file.filename.rsplit(".", 1)[0]}.html"'
-                }
-            )
-        
-    except Exception as e:
-        return JSONResponse({
-            'error': f'Failed to generate report: {str(e)}'
-        }, status_code=500)
-
-@app.post("/auto_prep_ml")
-async def auto_prep_for_ml(file: UploadFile = File(...), target_col: str = Form(None)):
-    """
-    Intelligent Data Preparation for Machine Learning
-    - Handles missing values
-    - Encodes categorical variables
-    - Scales numeric features
-    - Detects ID columns
-    """
-    if not SKLEARN_AVAILABLE:
-        return JSONResponse({'error': 'scikit-learn not installed. Please install it to use this feature.'}, status_code=500)
-
-    try:
-        contents = await file.read()
-        df = parse_uploaded_file(contents, file.filename, sample_rows=None) # Load full file for ML
-        
-        # 1. ID Column Detection (Drop high cardinality non-numeric)
-        potential_ids = []
-        for col in df.select_dtypes(include=['object', 'string']).columns:
-            if df[col].nunique() / len(df) > 0.95: # >95% unique
-                potential_ids.append(col)
-        
-        if potential_ids:
-            df = df.drop(columns=potential_ids)
-        
-        # 2. Separate Features and Target
-        y = None
-        if target_col and target_col in df.columns:
-            y = df[target_col]
-            X = df.drop(columns=[target_col])
-        else:
-            X = df
-            
-        # 3. Identify Column Types
-        numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
-        categorical_features = X.select_dtypes(include=['object', 'category']).columns
-        
-        # 4. Define Transformers
-        numeric_transformer = Pipeline(steps=[
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
-        ])
-
-        categorical_transformer = Pipeline(steps=[
-            ('imputer', SimpleImputer(strategy='most_frequent')),
-            ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False)) # Dense for now
-        ])
-
-        # 5. Create Preprocessor
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ('num', numeric_transformer, numeric_features),
-                ('cat', categorical_transformer, categorical_features)
-            ],
-            remainder='passthrough' # Keep other cols (like datetime if unhandled)
-        )
-        
-        # 6. Fit and Transform
-        X_processed = preprocessor.fit_transform(X)
-        
-        # 7. Reconstruct DataFrame with names
-        # Get feature names
-        new_cols = []
-        
-        # Numeric names
-        new_cols.extend(numeric_features)
-        
-        # Categorical names (OneHot)
-        if hasattr(preprocessor.named_transformers_['cat'], 'get_feature_names_out'):
-             cat_names = preprocessor.named_transformers_['cat']['encoder'].get_feature_names_out(categorical_features)
-             new_cols.extend(cat_names)
-        else:
-            # Fallback if get_feature_names_out fails
-            new_cols.extend([f"enc_{i}" for i in range(X_processed.shape[1] - len(numeric_features))])
-            
-        # Create output DF
-        df_ml_ready = pd.DataFrame(X_processed, columns=new_cols[:X_processed.shape[1]])
-        
-        # Re-attach target if exists
-        if y is not None:
-             df_ml_ready[target_col] = y.values
-             
-        # Export to CSV
-        output = io.StringIO()
-        df_ml_ready.to_csv(output, index=False)
-        output.seek(0)
-        
-        return StreamingResponse(
-            iter([output.getvalue()]),
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename=ml_ready_{file.filename.split('.')[0]}.csv"}
-        )
+            return Response(content=html, media_type="text/html", 
+                           headers={"Content-Disposition": "attachment; filename=report.html"})
 
     except Exception as e:
-        return JSONResponse({'error': f'Auto-Prep failed: {str(e)}'}, status_code=500)
+        logging.exception("Report Generation Failed")
+        return JSONResponse({'error': str(e)}, 500)
 
-
-@app.post('/correlation_matrix')
-async def correlation_matrix(file: UploadFile = File(...)):
-    """Generate correlation matrix for numeric columns"""
-    try:
-        contents = await file.read()
-        sheets = parse_uploaded_file(contents, file.filename, sample_rows=50000)
-        df = sheets[list(sheets.keys())[0]].copy()
-        
-        # Get numeric columns only
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        
-        if len(numeric_cols) < 2:
-            return JSONResponse({
-                'error': 'Need at least 2 numeric columns for correlation analysis'
-            }, status_code=400)
-        
-        # Calculate correlation
-        corr_matrix = df[numeric_cols].corr()
-        
-        # Convert to format suitable for heatmap
-        correlation_data = {
-            'columns': numeric_cols,
-            'matrix': corr_matrix.values.tolist(),
-            'pairs': []
-        }
-        
-        # Find strong correlations (|r| > 0.7)
-        for i in range(len(numeric_cols)):
-            for j in range(i+1, len(numeric_cols)):
-                corr_val = corr_matrix.iloc[i, j]
-                if abs(corr_val) > 0.7:
-                    correlation_data['pairs'].append({
-                        'col1': numeric_cols[i],
-                        'col2': numeric_cols[j],
-                        'correlation': round(corr_val, 3),
-                        'strength': 'strong' if abs(corr_val) > 0.9 else 'moderate'
-                    })
-        
-        return JSONResponse(correlation_data)
-        
-    except Exception as e:
-        return JSONResponse({'error': str(e)}, status_code=500)
-
-
-@app.post('/advanced_preprocess')
-async def advanced_preprocess(
-    file: UploadFile = File(...),
-    normalize: bool = Form(False),
-    standardize: bool = Form(False),
-    one_hot_encode: bool = Form(False),
-    handle_outliers: str = Form('none'),  # none, remove, cap
-    create_date_features: bool = Form(False),
-    selected_columns: str = Form(None)  # JSON string of column names
-):
-    """Advanced preprocessing with more options"""
-    try:
-        contents = await file.read()
-        sheets = parse_uploaded_file(contents, file.filename, sample_rows=100000)
-        df = sheets[list(sheets.keys())[0]].copy()
-        
-        # Filter columns if specified
-        if selected_columns:
-            cols = json.loads(selected_columns)
-            df = df[cols]
-        
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-        datetime_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
-        
-        changes = []
-        
-        # Normalize (0-1 scaling)
-        if normalize and numeric_cols:
-            for col in numeric_cols:
-                min_val = df[col].min()
-                max_val = df[col].max()
-                if max_val > min_val:
-                    df[col] = (df[col] - min_val) / (max_val - min_val)
-            changes.append(f"Normalized {len(numeric_cols)} numeric columns to 0-1 range")
-        
-        # Standardize (z-score)
-        if standardize and numeric_cols:
-            for col in numeric_cols:
-                mean_val = df[col].mean()
-                std_val = df[col].std()
-                if std_val > 0:
-                    df[col] = (df[col] - mean_val) / std_val
-            changes.append(f"Standardized {len(numeric_cols)} numeric columns (z-score)")
-        
-        # One-hot encode categorical
-        if one_hot_encode and categorical_cols:
-            # Limit to columns with <10 unique values
-            cols_to_encode = [col for col in categorical_cols if df[col].nunique() < 10]
-            if cols_to_encode:
-                df = pd.get_dummies(df, columns=cols_to_encode, prefix=cols_to_encode)
-                changes.append(f"One-hot encoded {len(cols_to_encode)} categorical columns")
-        
-        # Handle outliers
-        if handle_outliers != 'none' and numeric_cols:
-            for col in numeric_cols:
-                Q1 = df[col].quantile(0.25)
-                Q3 = df[col].quantile(0.75)
-                IQR = Q3 - Q1
-                lower_bound = Q1 - 1.5 * IQR
-                upper_bound = Q3 + 1.5 * IQR
-                
-                if handle_outliers == 'remove':
-                    df = df[(df[col] >= lower_bound) & (df[col] <= upper_bound)]
-                elif handle_outliers == 'cap':
-                    df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
-            
-            changes.append(f"Handled outliers in {len(numeric_cols)} columns ({handle_outliers})")
-        
-        # Create date features
-        if create_date_features and datetime_cols:
-            for col in datetime_cols:
-                df[f'{col}_year'] = df[col].dt.year
-                df[f'{col}_month'] = df[col].dt.month
-                df[f'{col}_day'] = df[col].dt.day
-                df[f'{col}_dayofweek'] = df[col].dt.dayofweek
-                df = df.drop(columns=[col])
-            changes.append(f"Created date features from {len(datetime_cols)} datetime columns")
-        
-        # Store for download
-        download_id = str(uuid.uuid4())
-        cleaned_datasets_store[download_id] = {
-            'df': df,
-            'filename': f"advanced_{file.filename}"
-        }
-        
-        return JSONResponse({
-            'status': 'success',
-            'original_rows': len(sheets[list(sheets.keys())[0]]),
-            'processed_rows': len(df),
-            'original_cols': len(sheets[list(sheets.keys())[0]].columns),
-            'processed_cols': len(df.columns),
-            'changes': changes,
-            'download_id': download_id,
-            'download_url': f"/download/{download_id}"
-        })
-        
-    except Exception as e:
-        return JSONResponse({'error': str(e)}, status_code=500)
-
-
-@app.post('/column_info')
-async def column_info(file: UploadFile = File(...)):
-    """Get detailed column information for filtering"""
-    try:
-        contents = await file.read()
-        sheets = parse_uploaded_file(contents, file.filename, sample_rows=10000)
-        df = sheets[list(sheets.keys())[0]].copy()
-        
-        col_types = infer_column_types(df)
-        
-        columns_info = []
-        for col in df.columns:
-            col_type = col_types.get(col, 'unknown')
-            columns_info.append({
-                'name': col,
-                'type': col_type,
-                'missing': int(df[col].isnull().sum()),
-                'missing_pct': round(df[col].isnull().sum() / len(df) * 100, 1),
-                'unique': int(df[col].nunique()),
-                'sample_values': df[col].dropna().head(3).tolist() if len(df[col].dropna()) > 0 else []
-            })
-        
-        return JSONResponse({
-            'columns': columns_info,
-            'total_columns': len(columns_info),
-            'types_summary': {
-                'numeric': sum(1 for c in columns_info if c['type'] == 'numeric'),
-                'categorical': sum(1 for c in columns_info if c['type'] == 'categorical'),
-                'datetime': sum(1 for c in columns_info if c['type'] == 'datetime'),
-                'other': sum(1 for c in columns_info if c['type'] not in ['numeric', 'categorical', 'datetime'])
-            }
-        })
-        
-    except Exception as e:
-        return JSONResponse({'error': str(e)}, status_code=500)
-
+# --- Entry Point ---
 
 if __name__ == '__main__':
-    print('Starting enhanced EDA server on http://localhost:8081')
-    uvicorn.run('app:app', host='0.0.0.0', port=8081, reload=False)
+    # Determine port
+    base_port = 8085
+    
+    def open_browser(port):
+        """Open browser after a short delay"""
+        time.sleep(1.5)
+        webbrowser.open(f'http://localhost:{port}')
+    
+    # Try multiple ports in case 8081 is blocked
+    for port in range(base_port, base_port + 10):
+        try:
+            threading.Thread(target=open_browser, args=(port,), daemon=True).start()
+            print(f"Server starting at http://localhost:{port}")
+            uvicorn.run(app, host='0.0.0.0', port=port, log_level="info")
+            break # Exit loop if successful
+        except Exception as e:
+            if "10048" in str(e) or "already in use" in str(e).lower():
+                print(f"⚠️ Port {port} is busy, trying {port + 1}...")
+                continue
+            else:
+                raise e
