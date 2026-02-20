@@ -714,30 +714,38 @@ async def generate_report(session_id: str = Form(...)):
 if __name__ == '__main__':
     import socket
     
-    def is_port_in_use(port):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex(('localhost', port)) == 0
-
-    base_port = 8085
-    target_port = base_port
-    
-    # Pre-check for available port
-    for port in range(base_port, base_port + 20):
-        if not is_port_in_use(port):
-            target_port = port
-            break
-        else:
-            print(f"⚠️ Port {port} is busy, checking next...")
-
     def open_browser(port):
         """Open browser after a short delay"""
         time.sleep(1.5)
         webbrowser.open(f'http://localhost:{port}')
     
-    try:
-        threading.Thread(target=open_browser, args=(target_port,), daemon=True).start()
-        print(f"Server starting at http://localhost:{target_port}")
-        uvicorn.run(app, host='0.0.0.0', port=target_port, log_level="info")
-    except Exception as e:
-        logging.exception("Fatal startup error")
-        print(f"❌ Failed to start server: {e}")
+    base_port = 8085
+    max_tries = 20
+    
+    for offset in range(max_tries):
+        target_port = base_port + offset
+        try:
+            # Create a socket to test if we can BIND to it (not just connect)
+            # This is more reliable on Windows
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('0.0.0.0', target_port))
+                
+            # If bind succeeded, start the actual server
+            threading.Thread(target=open_browser, args=(target_port,), daemon=True).start()
+            print(f"🚀 DataLyze Pro starting at http://localhost:{target_port}")
+            
+            uvicorn.run(app, host='0.0.0.0', port=target_port, log_level="info")
+            break # Exit if successful
+            
+        except OSError as e:
+            if e.errno == 10048: # Address already in use
+                print(f"⚠️ Port {target_port} is busy, trying {target_port + 1}...")
+                continue
+            else:
+                logging.exception("Fatal socket error")
+                print(f"❌ Error binding to port {target_port}: {e}")
+                break
+        except Exception as e:
+            logging.exception("Fatal startup error")
+            print(f"❌ Startup failed: {e}")
+            break
