@@ -32,7 +32,6 @@ args = [
     '--exclude-module=jupyter',
     '--exclude-module=unittest',
     '--exclude-module=test',
-    '--exclude-module=pydoc',
     '--exclude-module=pdb',
     '--exclude-module=sklearn',
     '--exclude-module=scipy',
