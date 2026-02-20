@@ -1,60 +1,49 @@
-# DataLyze - User Manual (Professional Edition)
+# DataLyze Pro: User Manual
 
-Welcome to **DataLyze**, your all-in-one solution for dataset visualization, cleaning, and ML preparation. This guide will walk you through the core features of the platform.
+## 1. Getting Started
+DataLyze Pro is a zero-installation tool. Simply double-click `DataLyze.exe` in the `dist/` folder to begin. The application will automatically open in your default web browser (usually at `http://localhost:8085`).
 
-## 🚀 Getting Started
+## 2. Core Workspace
+### 2.1. Uploading Data
+1.  **Drag & Drop**: Drag any `.csv`, `.xlsx`, or `.parquet` file onto the upload zone.
+2.  **Analyze**: Click "Upload & Process". DataLyze will generate a Dashboard with statistics and visualizations.
 
-### 1. Launching the App
-- **Windows**: Double-click `DataLyze.exe` in the `dist/` folder.
-- **Developer Mode**: Run `python app.py` and navigate to `http://localhost:8081`.
+### 2.2. Data Health
+The **Data Health** tab highlights issues like:
+*   Duplicate rows.
+*   Columns with missing values (shown in red).
+*   Constant columns (columns with no variance).
 
-### 2. Loading Data
-- Click the center drop zone or drag your file (**CSV, Excel, JSON, Parquet, or TXT**) directly onto the dashboard.
-- Once selected, click the **🚀 Analyze Dataset** button.
+## 3. Merge Studio (Advanced)
+The Merge Studio allows you to combine your current dataset with other files.
 
-## 📊 Dashboard Features
+### 3.1. Performing a Bulk Merge
+1.  **Select Multiple Files**: Click "Browse" and select one or more files to merge.
+2.  **Define Keys**: 
+    *   **Primary Key(s)**: Enter the column name(s) from your current data.
+    *   **Secondary Key(s)**: Enter the column name(s) from the new files.
+    *   *Note: For multiple columns, separate them with commas (e.g., `Year, ID`).*
+3.  **Choose Type**: Select Inner, Left, Right, or Full Outer Join.
+4.  **Run**: Click "Run Bulk Merge". The resulting dataset will automatically download.
 
-### Quick Profile
-The "Quick Profile" panel on the right provides an instant snapshot of your data:
-- **Type Detection**: Tells you if a column is Numeric, Categorical, Datetime, or Text.
-- **Missing Values**: Highlights potential data gaps in **Red**.
-- **Unique Count**: Shows the cardinality of each column.
+## 4. Data Cleaning
+1.  Open the **Data Cleaning** section.
+2.  Check your desired options:
+    *   **Remove Duplicates**: Deletes identical rows.
+    *   **Impute Missing Values**: Fills empty cells with the Median or Mode.
+    *   **Drop Constant Columns**: Removes columns that provide no information.
+3.  Click **Clean & Download** to get your refined dataset.
 
-### Data Health Tab
-Located on the left, this tab proactively scans for issues:
-- **Duplicates**: Tells you exactly how many identical rows exist.
-- **Constant Columns**: Alerts you to columns that provide no information (e.g., all rows have the same value).
-- **Suggestions**: Provides actionable advice on how to improve your data quality.
+## 5. Machine Learning Readiness
+Click the **Auto-Prep for ML** button. This will:
+1.  Handle all missing values.
+2.  Perform One-Hot Encoding on categorical columns with low cardinality.
+3.  Return a clean CSV ready for training models.
 
-## 🛠️ Advanced Tools (Toolbar)
-
-### 🧹 Clean Data
-Click the "Clean Data" button to open the cleaning studio:
-- **Remove Duplicates**: Instantly purges identical rows.
-- **Impute Missing**: Fills empty cells using the **Median** for numbers or **Mode** for categories.
-- **Drop Constant**: Removes useless columns automatically.
-
-### 🔗 Merge Studio
-Need to combine datasets?
-1. Open the **Merge Studio**.
-2. Select a **Primary Key** from your current data.
-3. Upload a **Secondary File**.
-4. Enter the **Secondary Key** and choose your **Merge Type** (Inner, Left, Right, or Full).
-
-### 🤖 Auto-Prep for ML
-Preparing for Machine Learning? This feature:
-- Performs intelligent imputation.
-- Handles One-Hot Encoding for low-cardinality categories.
-- Downloads a **clean, numeric-ready CSV** perfect for Scikit-learn or TensorFlow.
-
-### 📄 Download Report
-Generates a professional summary of your dataset.
-- Includes statistical summaries.
-- Lists data structures and identified quality issues.
-- Downloads as a **PDF** (if dependencies are present) or an optimized **HTML** file.
-
-## 🎨 Personalization
-- Use the **☀️/🌙** toggle in the top right to switch between high-contrast dark mode and clean light mode.
+## 6. Troubleshooting
+*   **App won't start?** Ensure no other process is using port 8085. The app will try up to port 8095 automatically.
+*   **Merge Failed?** Ensure your join keys exist in both datasets and that the number of keys matches exactly.
+*   **Browser showing old version?** Press `Ctrl + F5` to perform a hard refresh and clear the cache.
 
 ---
-**Support**: For technical issues, please refer to the `README.md` or contact the development team.
+*DataLyze Pro - Making Data Work For You.*

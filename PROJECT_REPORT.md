@@ -1,41 +1,46 @@
-# DataLyze - Professional Project Analysis
+# DataLyze Pro: Architectural Analysis & Technical Report
 
-## Executive Summary
-DataLyze is a high-performance, premium data visualization and preprocessing platform. It bridges the gap between raw data and actionable insights by providing automated profiling, intelligent visualization recommendations, and "one-click" machine learning preparation.
+## 1. Executive Summary
+DataLyze Pro is a high-performance, lightweight Exploratory Data Analysis (EDA) tool designed to handle large datasets (up to 25GB) with a modern, glassmorphism-based web interface. Unlike traditional tools that crash under memory pressure during complex joins, DataLyze utilizes a hybrid **DuckDB/Pandas** engine to ensure stability and speed.
 
-## Technical Architecture
+## 2. Technical Stack
+| Layer | Technology | Rationale |
+| :--- | :--- | :--- |
+| **Backend** | Python 3.14 + FastAPI | High-speed asynchronous API handling. |
+| **Data Engine** | DuckDB + Pandas + NumPy | DuckDB handles massive joins; Pandas handles rapid EDA. |
+| **Frontend** | Vanilla JS + Plotly.js | Premium aesthetics without the weight of heavy frameworks. |
+| **Styling** | Vanilla CSS (Glassmorphism) | Dynamic, premium look with zero dependency overhead. |
+| **Packaging** | PyInstaller (Optimized) | 56MB standalone binary for easy distribution. |
 
-### Backend (Python/FastAPI)
-- **High-Concurrency Engine**: Utilizes `ThreadPoolExecutor` for parallelizing data profiling across CPU cores.
-- **Adaptive Backend**: Automatically switches between **Pandas** (for standard files) and **DuckDB** (for large-scale data processing >500MB).
-- **Session Management**: Implements an in-memory session store for temporary data handling, optimized for low memory footprint.
-- **Reporting Layer**: Uses `WeasyPrint` (if available) for professional PDF generation or falls back to optimized HTML reports.
+## 3. Core Architecture
+### 3.1. Hybrid Data Engine
+The application intelligently selects the processing engine based on task intensity:
+*   **Pandas**: Used for initial profiling, health checks, and quick visualizations on sampled data.
+*   **DuckDB**: Leveraged for "heavy lifting" like Multi-Key and Bulk Merges. Its SQL-based join engine supports spill-to-disk, preventing the common `MemoryError` associated with Cartesian products.
 
-### Frontend (Vanilla JS/CSS)
-- **Glassmorphism UI**: A state-of-the-art design system built with custom CSS variables, supporting dynamic dark/light themes.
-- **Reactive Dashboard**: Real-time rendering of Plotly.js visualizations based on backend heuristics.
-- **Micro-Animations**: Smooth fade-ins and interactive hover effects for a premium user experience.
+### 3.2. Memory-Safe Data Pipeline
+*   **Streaming Downloads**: Instead of loading the entire result into RAM to serve a file, DataLyze uses a `StreamingResponse` to push CSV data in chunks. This allows downloading 1M+ row files on machines with low RAM.
+*   **Merge Safety Guard**: Predictive logic analyzes join keys before execution. If a "Cartesian explosion" (e.g., millions of resulting rows) is detected, the operation is blocked to protect system stability.
 
-## Key Features
+## 4. Feature Set Analysis
+### 4.1. Intelligent Profiling
+*   **Heuristic Type Detection**: Automatically identifies Geo-coordinates, Datetime, Categorical, and Numeric types.
+*   **Data Health Check**: Detects duplicate rows, constant columns, and missing value patterns automatically.
 
-### 1. Intelligent Data Health Scan
-- **Automatic Detection**: Scans for duplicate rows, missing values, and constant columns.
-- **Actionable Insights**: Provides specific warnings in the "Data Health" tab with descriptions of the issues.
+### 4.2. Advanced Merge Studio
+*   **Bulk Merge**: Allows merging multiple secondary files into a primary dataset in a single operation.
+*   **Multi-Key Support**: Facilitates complex relational joins using comma-separated key lists.
+*   **Collission Handling**: Automatic suffixing (`_secondary`) for overlapping column names prevents SQL/Pandas merge errors.
 
-### 2. Auto-Prep for ML
-- **Feature Engineering**: Automated handling of numeric missing values (median imputation) and categorical missing values (labeling).
-- **Encoding**: Implements one-hot encoding for categorical variables with manageable cardinality.
-- **Scalability**: Designed to handle datasets up to 25GB using DuckDB-powered sampling.
+## 5. Build Optimization
+The production binary was reduced from 200MB+ to **56.8 MB** by:
+1.  Using a custom virtual environment for builds.
+2.  Explicitly excluding unused high-weight libraries like `scikit-learn`, `scipy`, and `matplotlib` (replaced by lightweight Plotly/DuckDB).
 
-### 3. Merge Studio
-- **Dynamic Joining**: Allows users to upload a secondary dataset and perform SQL-like joins (Inner, Left, Right, Full) directly in the browser.
-- **Key Discovery**: Automatically populates primary key options from the current dataset.
+## 6. Security and Logistics
+*   **Zero-Install**: Portable `.exe` requires no local Python installation.
+*   **Port Management**: Dynamic port selection (8085-8095) prevents conflicts with existing services.
+*   **Cache Management**: Versioned static routing ensure the latest UI features are always served to the browser.
 
-## Performance Metrics
-- **Upload Speed**: Processes 100k+ rows in under 2 seconds (on standard hardware).
-- **Memory Efficiency**: Implements lazy loading for previews to keep browser memory usage low.
-
-## Future Roadmap
-- **Advanced ML Models**: Integration of Scikit-learn directly for baseline model training.
-- **Export Formats**: Support for SQL export and Parquet optimization.
-- **Cloud Integration**: AWS/Azure storage hooks for enterprise data.
+---
+*Report generated by DataLyze Engineering Team (v1.0.0)*
