@@ -4,7 +4,11 @@
 
 DataLyze Pro is a premium, lightweight, and robust data visualization suite designed for data scientists and analysts who need speed without complexity. Built with a hybrid **DuckDB + FastAPI** backend, it handles massive joins and high-cardinality datasets where traditional tools fail.
 
-![DataLyze Dashboard](screenshot.png)
+<img width="1919" height="934" alt="Image" src="https://github.com/user-attachments/assets/09dc06a9-c683-469d-8ff0-2897287b5b56" />
+
+<img width="464" height="888" alt="Image" src="https://github.com/user-attachments/assets/6fce1540-c79f-46b7-a949-415d6be1b507" />
+
+<img width="466" height="169" alt="Image" src="https://github.com/user-attachments/assets/4315d6a3-0a9e-4205-ab29-eb1075823a20" />
 
 ## 🚀 Key Features
 
