@@ -1,4 +1,4 @@
-# 📊 DataLyze Pro
+# 📊 DataLyze
 
 **High-Performance Exploratory Data Analysis & Automated Preprocessing Tool**
 
